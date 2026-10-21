@@ -4,6 +4,8 @@ The designed component layer for generative UI: copy-paste components an AI agen
 
 https://github.com/user-attachments/assets/156a14e6-2c3e-472d-a518-f161213a1a22
 
+**Try it live:** type a request in the [playground](https://gen-ui-kit.vercel.app/playground) and an agent builds it from the catalog.
+
 Docs, live demos and install commands: https://gen-ui-kit.vercel.app
 
 ## What's here
