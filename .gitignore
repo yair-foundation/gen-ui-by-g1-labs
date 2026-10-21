@@ -1,0 +1,13 @@
+# deps
+node_modules
+
+# generated registry output (pnpm registry:build)
+/public/r
+
+# misc
+.DS_Store
+*.tsbuildinfo
+
+# env: never commit secrets
+.env*
+!.env.example
