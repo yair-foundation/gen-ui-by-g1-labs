@@ -2,7 +2,7 @@
 
 The designed component layer for generative UI: copy-paste components an AI agent assembles at runtime from real data. Each component ships with a Zod schema the agent fills in, guidance, a tool definition and a typed result. Install with the shadcn CLI and own the code.
 
-https://github.com/user-attachments/assets/156a14e6-2c3e-472d-a518-f161213a1a22
+[![Gen UI by G1 Labs reel: components an agent builds at runtime](.github/assets/reel.gif)](.github/assets/reel.mp4)
 
 **Try it live:** type a request in the [playground](https://gen-ui-kit.vercel.app/playground) and an agent builds it from the catalog.
 
