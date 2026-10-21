@@ -30,7 +30,7 @@ export const genuiEase = {
 export const genuiStepIn = {
   initial: { opacity: 0, y: 6, filter: "blur(2px)" },
   animate: { opacity: 1, y: 0, filter: "blur(0px)" },
-  transition: { duration: 0.4, ease: genuiEase.emphasized },
+  transition: { duration: 0.25, ease: genuiEase.emphasized },
 } as const
 
 /**

@@ -1,5 +1,10 @@
 import qrcode from "qrcode-generator"
 
+import {
+  DEFAULT_LOCALE,
+  formatRangeWithDash,
+} from "@/components/genui/locale"
+
 import type { QrContent, QrErrorCorrection } from "./qr-code.schema"
 
 /**
@@ -9,6 +14,30 @@ import type { QrContent, QrErrorCorrection } from "./qr-code.schema"
  */
 
 type Of<T extends QrContent["type"]> = Extract<QrContent, { type: T }>
+
+/** "Thu, Nov 5, 2026, 6:00 – 8:30 PM" in the viewer's time zone. */
+export function formatWhen(
+  start: string,
+  end: string | undefined,
+  locale: string = DEFAULT_LOCALE,
+) {
+  const allDay = isDateOnly(start)
+  const parse = (s: string) => new Date(allDay ? `${s}T00:00:00Z` : s)
+  const format = new Intl.DateTimeFormat(
+    locale,
+    allDay
+      ? { dateStyle: "full", timeZone: "UTC" }
+      : { dateStyle: "medium", timeStyle: "short" },
+  )
+  const a = parse(start)
+  if (!end) return format.format(a)
+  const b = parse(end)
+  try {
+    return formatRangeWithDash(format, a, b)
+  } catch {
+    return `${format.format(a)} – ${format.format(b)}`
+  }
+}
 
 // ---- Payloads ---------------------------------------------------------------
 

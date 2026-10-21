@@ -6,7 +6,7 @@
  * returns new values; nothing is mutated.
  */
 
-import { DEFAULT_LOCALE } from "@/components/genui/locale"
+import { DEFAULT_LOCALE, formatRangeWithDash } from "@/components/genui/locale"
 
 export type SliderFormat = "currency" | "number" | "percent"
 
@@ -394,9 +394,7 @@ export function formatDateRange(
     timeZone: "UTC",
   })
   if (r.start === r.end) return fmt.format(a)
-  return typeof fmt.formatRange === "function"
-    ? fmt.formatRange(a, b)
-    : `${fmt.format(a)} – ${fmt.format(b)}`
+  return formatRangeWithDash(fmt, a, b)
 }
 
 /** Inclusive number of days in a range (1 for a single day). */

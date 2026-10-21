@@ -46,3 +46,50 @@ export function GenUILocaleProvider({
 export function useGenUILocale(): string {
   return React.useContext(LocaleContext)
 }
+
+/**
+ * A date range with its en dash set by one rule, not the ICU version's:
+ * closed between single terms ("14–19 Nov"), spaced when a term has a space
+ * ("28 Nov – 3 Dec"). ICU 78 (Node 26) puts thin spaces around every range
+ * dash while older ICU closes some, so the raw `formatRange` differs between
+ * Node versions and browsers and breaks tests and hydration. Use this for
+ * every `Intl.DateTimeFormat` range.
+ *
+ * Only whitespace changes: around the dash, and ICU 78's thin spaces inside a
+ * term (en-GB "5<thin>November"), which become plain spaces. Punctuation
+ * beside the dash stays ("5. – 7. November"), and a separator that is not an
+ * en dash (Japanese "～") is left as the locale wrote it. Throws what
+ * `formatRange` throws, so callers with unvalidated dates keep their try/catch.
+ */
+export function formatRangeWithDash(
+  fmt: Intl.DateTimeFormat,
+  a: Date,
+  b: Date,
+): string {
+  const plain = (text: string) => text.replace(/\u2009/g, " ")
+  if (typeof fmt.formatRangeToParts !== "function") {
+    return `${fmt.format(a)} – ${fmt.format(b)}`
+  }
+  const parts = fmt.formatRangeToParts(a, b)
+  const lastStart = parts.findLastIndex((p) => p.source === "startRange")
+  const firstEnd = parts.findIndex((p) => p.source === "endRange")
+  if (lastStart < 0 || firstEnd <= lastStart) return plain(fmt.formatRange(a, b))
+  const join = (from: number, to?: number) =>
+    parts
+      .slice(from, to)
+      .map((p) => p.value)
+      .join("")
+  const sep = join(lastStart + 1, firstEnd)
+  if (sep.split("–").length !== 2) return plain(fmt.formatRange(a, b))
+  const term = (source: string) =>
+    parts
+      .filter((p) => p.source === source)
+      .map((p) => p.value)
+      .join("")
+  const spaced = /\s/.test(term("startRange")) || /\s/.test(term("endRange"))
+  return plain(
+    join(0, lastStart + 1) +
+      sep.replace(/\s*–\s*/, spaced ? " – " : "–") +
+      join(firstEnd),
+  )
+}

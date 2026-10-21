@@ -28,6 +28,7 @@ import {
   StarIcon,
   TagIcon,
   TimerIcon,
+  TrendingUpIcon,
   UserIcon,
   UsersIcon,
   UtensilsIcon,
@@ -79,6 +80,7 @@ const ICONS: Record<SummaryIcon, LucideIcon> = {
   route: RouteIcon,
   target: TargetIcon,
   "cloud-sun": CloudSunIcon,
+  "trending-up": TrendingUpIcon,
 }
 
 export type SummaryCardProps = Partial<Omit<SummaryCardInput, "facts">> & {

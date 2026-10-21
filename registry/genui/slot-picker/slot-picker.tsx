@@ -471,12 +471,12 @@ export function SlotPicker({
                         <span
                           aria-hidden
                           className={cn(
-                            "mt-1 w-0.5 rounded-full transition-all",
+                            "mt-1 h-4 w-0.5 origin-top rounded-full transition-[scale,background-color]",
                             pressed
-                              ? "h-4 bg-choice"
+                              ? "bg-choice"
                               : full
-                                ? "h-3 bg-transparent"
-                                : "h-3 bg-muted-foreground/40",
+                                ? "scale-y-75 bg-transparent"
+                                : "scale-y-75 bg-muted-foreground/40",
                           )}
                         />
                         <span className="sr-only">

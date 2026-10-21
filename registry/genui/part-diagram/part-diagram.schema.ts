@@ -140,7 +140,10 @@ export const partDiagramSchema = z.object({
   overview: z
     .object({
       heading: z.string().max(48),
-      summary: z.string().max(200),
+      summary: z
+        .string()
+        .max(200)
+        .describe("One or two sentences, 200 characters at most."),
     })
     .optional()
     .describe(

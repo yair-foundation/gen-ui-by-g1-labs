@@ -395,9 +395,26 @@ export function viewVector(P: Projection): Point3 {
 function shadeOf(n: Point3, P: Projection): number {
   if (n[2] > 0.85) return 4
   const a = P.azimuth * RADIANS
-  const lit = (n[0] * -Math.sin(a) + n[1] * Math.cos(a) + n[2] * 0.6 + 1) / 2
+  const lit = settle(
+    (n[0] * -Math.sin(a) + n[1] * Math.cos(a) + n[2] * 0.6 + 1) / 2,
+  )
   return Math.min(SHADES - 1, Math.max(0, Math.floor(lit * SHADES)))
 }
+
+/**
+ * A value rounded far above floating-point noise, for ordering and bucketing.
+ * Node and browsers can differ in the last bit of Math.sin and Math.cos, so
+ * mirrored facets that tie in depth would sort differently on the server and
+ * in the browser and break hydration.
+ */
+const settle = (v: number) => Math.round(v * 1e6) / 1e6
+
+/**
+ * A number written to the page as is (a bolt's position, a pipe's width),
+ * rounded so the last bits of floating point, which differ between the
+ * server's engine and the browser's, never reach an attribute.
+ */
+const hundredth = (v: number) => Math.round(v * 100) / 100
 
 /** Valid [s, r] pairs (r ≥ 0), in order of s. */
 export function readyProfile(profile: unknown): [number, number][] {
@@ -423,6 +440,27 @@ export interface LatheDetail {
   phase?: number
   /** Draw a radial marker on the end face (a spinning part with no other detail). */
   marker?: boolean
+  /** Flat sides instead of a round body, 3 to 12: a square tower, a pyramid, a hex nut. */
+  sides?: number
+  /** Hollow centre of this radius through a straight body: its ends become rings. */
+  bore?: number
+}
+
+/**
+ * A straight body's half-section with a hole through it: out along the start
+ * face, along the outside, back in along the end face, then down the bore.
+ * Drawn open, so the bore's wall and both ring faces show.
+ */
+export function boredProfile(
+  profile: [number, number][],
+  bore: number,
+): [number, number][] {
+  if (profile.length < 2) return profile
+  const [s0, r0] = profile[0]
+  const [s1, r1] = profile[profile.length - 1]
+  const hole = Math.min(bore, Math.min(r0, r1) * 0.98)
+  if (!(hole > 0)) return profile
+  return [[s0, hole], ...profile, [s1, hole], [s0, hole]]
 }
 
 export interface Facet {
@@ -452,16 +490,22 @@ export function latheGeometry(
   P: Projection,
   opts: LatheDetail = {},
 ): LatheGeometry {
-  const profile = profileIn
+  const hollow =
+    opts.bore && opts.bore > 0 ? boredProfile(profileIn, opts.bore) : null
+  const profile = hollow ?? profileIn
   const V = viewVector(P)
   const aV = dot3(F.a, V)
   const uV = dot3(F.u, V)
   const wV = dot3(F.w, V)
   const R = Math.hypot(uV, wV)
   const phi = Math.atan2(wV, uV)
-  const open = Boolean(opts.open)
-  const N = LATHE_STEPS
+  const open = Boolean(opts.open) || Boolean(hollow)
+  const sides =
+    opts.sides && opts.sides >= 3 ? Math.min(12, Math.round(opts.sides)) : 0
+  const N = sides || LATHE_STEPS
   const step = (Math.PI * 2) / N
+  // A faceted body has a corner at `off`, so a square's sides face the frame's axes.
+  const off = sides ? Math.PI / sides : 0
   const at = (s: number, r: number, th: number) => iso(pointOf(F, s, r, th), P)
   const radial = (th: number): Point3 => {
     const c = Math.cos(th)
@@ -496,7 +540,7 @@ export function latheGeometry(
     const [s0, r0] = profile[k]
     const [s1, r1] = profile[k + 1]
     for (let j = 0; j < N; j++) {
-      const t0 = j * step
+      const t0 = off + j * step
       const t1 = t0 + step
       let n = normalOf(k, t0 + step / 2)
       if (!n) continue
@@ -517,7 +561,7 @@ export function latheGeometry(
       ]
       raw.push({
         pts: quad.map((q) => iso(q, P)),
-        depth: depthOf(mid, P),
+        depth: settle(depthOf(mid, P)),
         shade: shadeOf(n, P),
       })
     }
@@ -530,10 +574,10 @@ export function latheGeometry(
   for (const cap of caps) {
     if (!faces(cap.n)) continue
     const [sc, rc] = profile[cap.k]
-    const pts = Array.from({ length: N }, (_, j) => at(sc, rc, j * step))
+    const pts = Array.from({ length: N }, (_, j) => at(sc, rc, off + j * step))
     raw.push({
       pts,
-      depth: depthOf(pointOf(F, sc, 0, 0), P),
+      depth: settle(depthOf(pointOf(F, sc, 0, 0), P)),
       shade: shadeOf(cap.n, P),
     })
   }
@@ -546,9 +590,10 @@ export function latheGeometry(
     else facets.push({ d, shade: f.shade })
   }
 
-  // Limbs: where the surface turns away, solved exactly per segment.
+  // Limbs: where the surface turns away, solved exactly per segment. A
+  // faceted body turns away at its corners instead (below).
   const outline: string[] = []
-  for (const sign of [1, -1]) {
+  for (const sign of sides ? [] : [1, -1]) {
     let run: Flat[] = []
     const flush = () => {
       if (run.length > 1) outline.push(pathOf(run))
@@ -589,7 +634,46 @@ export function latheGeometry(
       return !open && profile[last][1] > 0 ? (F.a as Point3) : null
     return normalOf(k, th)
   }
-  for (let k = 0; k <= last; k++) {
+  if (sides) {
+    // Corners: an outline where one neighbouring side shows, a crease where both do.
+    for (let k = 0; k < last; k++) {
+      const [s0, r0] = profile[k]
+      const [s1, r1] = profile[k + 1]
+      if (r0 <= 0 && r1 <= 0) continue
+      for (let j = 0; j < N; j++) {
+        const th = off + j * step
+        const nb = normalOf(k, th - step / 2)
+        const na = normalOf(k, th + step / 2)
+        const vb = open ? nb !== null : faces(nb)
+        const va = open ? na !== null : faces(na)
+        if (!vb && !va) continue
+        const edge = pathOf([at(s0, r0, th), at(s1, r1, th)])
+        if (vb && va) crease.push(edge)
+        else outline.push(edge)
+      }
+    }
+    // Rings: each side's edge, classed by the faces above and below it.
+    for (let k = 0; k <= last; k++) {
+      const [sk, rk] = profile[k]
+      if (rk <= 0) continue
+      for (let j = 0; j < N; j++) {
+        const th = off + (j + 0.5) * step
+        const nb = sideFaces(k, th, -1)
+        const na = sideFaces(k, th, 1)
+        const vb = open ? nb !== null : faces(nb)
+        const va = open ? na !== null : faces(na)
+        if (!vb && !va) continue
+        const turn = nb && na ? dot3(nb, na) : 1
+        const edge = pathOf([
+          at(sk, rk, off + j * step),
+          at(sk, rk, off + (j + 1) * step),
+        ])
+        if (vb !== va) outline.push(edge)
+        else if (turn < 0.985) crease.push(edge)
+      }
+    }
+  }
+  for (let k = 0; k <= (sides ? -1 : last); k++) {
     const [sk, rk] = profile[k]
     if (rk <= 0) continue
     const cls: (0 | 1 | 2)[] = []
@@ -655,8 +739,9 @@ export function latheGeometry(
     const r = r0 + ((r1 - r0) * (sr - s0)) / (s1 - s0)
     let run: Flat[] = []
     for (let j = 0; j <= N; j++) {
-      const th = j * step
-      if (faces(normalOf(k, th))) run.push(at(sr, r, th))
+      const th = off + j * step
+      if (faces(normalOf(k, sides ? th - step / 2 : th)))
+        run.push(at(sr, r, th))
       else {
         if (run.length > 1) detail.push(pathOf(run))
         run = []
@@ -668,9 +753,10 @@ export function latheGeometry(
   // Blades, bolts and a marker on the far end face.
   const marks: string[] = []
   const dots: Flat[] = []
-  let fk = last
-  while (fk > 0 && profile[fk][1] <= 0) fk--
-  const [sf, rf] = profile[fk]
+  const ends = profileIn
+  let fk = ends.length - 1
+  while (fk > 0 && ends[fk][1] <= 0) fk--
+  const [sf, rf] = ends[fk]
   const faceSeen = open ? Math.abs(aV) > 0.08 : aV > 0.08
   if (rf > 0 && faceSeen) {
     if (opts.blades && opts.blades >= 2) {
@@ -687,7 +773,9 @@ export function latheGeometry(
       }
       marks.push(
         pathOf(
-          Array.from({ length: N }, (_, j) => at(sf, rf * 0.22, j * step)),
+          Array.from({ length: 24 }, (_, j) =>
+            at(sf, rf * 0.22, (j * Math.PI * 2) / 24),
+          ),
           true,
         ),
       )
@@ -704,7 +792,11 @@ export function latheGeometry(
     }
     if (opts.bolts && opts.bolts >= 3) {
       for (let i = 0; i < opts.bolts; i++)
-        dots.push(at(sf, rf * 0.82, phase + (i * Math.PI * 2) / opts.bolts))
+        dots.push(
+          at(sf, rf * 0.82, phase + (i * Math.PI * 2) / opts.bolts).map(
+            hundredth,
+          ) as Flat,
+        )
     }
   }
 
@@ -715,6 +807,160 @@ export function latheGeometry(
     detail: detail.join(""),
     marks: marks.join(""),
     dots,
+  }
+}
+
+/**
+ * A profile as an open truss, seen from P: legs at the corners of `sides`
+ * flat faces, a ring at each profile point and X-bracing on every face, with
+ * no fill, so what's behind shows through. The near members are outlines and
+ * marks; the far ones are faint detail.
+ */
+export function latticeGeometry(
+  F: Frame,
+  profile: [number, number][],
+  P: Projection,
+  sidesIn = 4,
+  phase = 0,
+): LatheGeometry {
+  const V = viewVector(P)
+  const N = Math.max(3, Math.min(12, Math.round(sidesIn)))
+  const step = (Math.PI * 2) / N
+  const off = Math.PI / N + phase
+  const at = (s: number, r: number, th: number) => iso(pointOf(F, s, r, th), P)
+  const last = profile.length - 1
+  /** Whether face j of segment k turns toward the viewer. */
+  const front = (k: number, j: number) => {
+    const [s0, r0] = profile[k]
+    const [s1, r1] = profile[k + 1]
+    const th = off + (j + 0.5) * step
+    const c = Math.cos(th)
+    const n = Math.sin(th)
+    const rad: Point3 = [
+      F.u[0] * c + F.w[0] * n,
+      F.u[1] * c + F.w[1] * n,
+      F.u[2] * c + F.w[2] * n,
+    ]
+    const ds = s1 - s0
+    const dr = r1 - r0
+    const normal: Point3 = [
+      -dr * F.a[0] + ds * rad[0],
+      -dr * F.a[1] + ds * rad[1],
+      -dr * F.a[2] + ds * rad[2],
+    ]
+    return dot3(normal, V) > 0
+  }
+  const near: string[] = []
+  const braces: string[] = []
+  const far: string[] = []
+  for (let k = 0; k < last; k++) {
+    const [s0, r0] = profile[k]
+    const [s1, r1] = profile[k + 1]
+    if (r0 <= 0 && r1 <= 0) continue
+    // Legs.
+    for (let j = 0; j < N; j++) {
+      const th = off + j * step
+      const shown = front(k, j) || front(k, (j + N - 1) % N)
+      ;(shown ? near : far).push(pathOf([at(s0, r0, th), at(s1, r1, th)]))
+    }
+    // Bracing: square-ish panels, one X each.
+    const width = (r0 + r1) * Math.sin(Math.PI / N)
+    const length = Math.hypot(s1 - s0, r1 - r0)
+    const panels =
+      width > 0 ? Math.max(1, Math.min(12, Math.round(length / width))) : 1
+    for (let j = 0; j < N; j++) {
+      const ta = off + j * step
+      const tb = ta + step
+      const target = front(k, j) ? braces : far
+      for (let q = 0; q < panels; q++) {
+        const f0 = q / panels
+        const f1 = (q + 1) / panels
+        const sA = s0 + (s1 - s0) * f0
+        const rA = r0 + (r1 - r0) * f0
+        const sB = s0 + (s1 - s0) * f1
+        const rB = r0 + (r1 - r0) * f1
+        target.push(pathOf([at(sA, rA, ta), at(sB, rB, tb)]))
+        target.push(pathOf([at(sA, rA, tb), at(sB, rB, ta)]))
+      }
+    }
+  }
+  // Rings at each profile point.
+  for (let k = 0; k <= last; k++) {
+    const [sk, rk] = profile[k]
+    if (rk <= 0) continue
+    for (let j = 0; j < N; j++) {
+      const shown = (k > 0 && front(k - 1, j)) || (k < last && front(k, j))
+      ;(shown ? near : far).push(
+        pathOf([at(sk, rk, off + j * step), at(sk, rk, off + (j + 1) * step)]),
+      )
+    }
+  }
+  return {
+    facets: [],
+    outline: near.join(""),
+    crease: "",
+    detail: far.join(""),
+    marks: braces.join(""),
+    dots: [],
+  }
+}
+
+/**
+ * An open rotor seen from P: `blades` flat blades from a hub, in the plane at
+ * the frame's origin, with nothing between them. Windmill sails, a
+ * propeller, a wind turbine or a helicopter's rotor.
+ */
+export function rotorGeometry(
+  F: Frame,
+  r: number,
+  blades: number,
+  chord: number,
+  P: Projection,
+  phase = 0,
+): LatheGeometry {
+  const V = viewVector(P)
+  const aV = dot3(F.a, V)
+  const hubR = Math.max(r * 0.05, Math.min(r * 0.12, chord * r * 0.4))
+  const rootW = chord * r
+  const tipW = rootW * 0.75
+  const n = Math.max(2, Math.min(12, Math.round(blades)))
+  const facing: Point3 = aV >= 0 ? F.a : [-F.a[0], -F.a[1], -F.a[2]]
+  const shade = shadeOf(facing, P)
+  const facets: Facet[] = []
+  const outline: string[] = []
+  for (let i = 0; i < n; i++) {
+    const th = phase + (i * Math.PI * 2) / n
+    const along = (rad: number, side: number) => {
+      const t = th + Math.atan2(side, rad)
+      return iso(pointOf(F, 0, Math.hypot(rad, side), t), P)
+    }
+    const blade = [
+      along(hubR * 0.9, -rootW / 2),
+      along(r, -tipW / 2),
+      along(r, tipW / 2),
+      along(hubR * 0.9, rootW / 2),
+    ]
+    const d = pathOf(blade, true)
+    facets.push({ d, shade })
+    outline.push(d)
+  }
+  // The hub: a short nose along the axis, drawn over the blade roots.
+  const hub = latheGeometry(
+    F,
+    [
+      [-hubR * 0.8, hubR],
+      [hubR * 0.6, hubR],
+      [hubR * 1.8, 0],
+    ],
+    P,
+  )
+  return {
+    facets: [...facets, ...hub.facets],
+    outline: outline.join("") + hub.outline,
+    crease: hub.crease,
+    detail: "",
+    marks: "",
+    dots: [],
   }
 }
 
@@ -824,6 +1070,14 @@ export function isShape(s: unknown): s is MechanismShape {
         prof[prof.length - 1][0] > prof[0][0]
       )
     }
+    case "rotor":
+      return (
+        finite(shape.x) &&
+        finite(shape.y) &&
+        positive(shape.r) &&
+        finite(shape.blades) &&
+        shape.blades >= 2
+      )
     case "pipe":
       return (
         Array.isArray(shape.points) && shape.points.filter(isPoint3).length >= 2
@@ -936,6 +1190,12 @@ export function extremesOf(part: MechanismPart): Point3[] {
       for (let j = 0; j < 8; j++) push(pointOf(F, ps, pr, (j * Math.PI) / 4))
     return out
   }
+  if (s.type === "rotor") {
+    // Blades sweep the whole circle as the rotor turns.
+    const F = frameOf([s.x, s.y, s.z ?? 0], s.axis ?? "z")
+    for (let j = 0; j < 8; j++) push(pointOf(F, 0, s.r, (j * Math.PI) / 4))
+    return out
+  }
   const z0 = s.z ?? 0
   const z1 = z0 + s.h
   const halfW = s.type === "box" ? s.w / 2 : s.r
@@ -969,6 +1229,7 @@ export function centreOf(part: MechanismPart): Point3 {
     const mid = (profile[0][0] + profile[profile.length - 1][0]) / 2
     return pointOf(F, mid, 0, 0)
   }
+  if (s.type === "rotor") return [s.x, s.y, s.z ?? 0]
   const z0 = s.z ?? 0
   return [s.x, s.y, z0 + s.h / 2]
 }
@@ -1080,6 +1341,8 @@ export type SceneItem =
        * replace paths.fill, paths.shades and paths.top.
        */
       facets?: Facet[]
+      /** Drawn as a see-through shell: fills faint, so what's inside shows. */
+      ghost: boolean
       /** Marks on a face: a hub ring, blades, a spin marker. */
       marks: string
       /** Faint lines on the surface: windows, vents, panels, ribs, seams. */
@@ -1127,9 +1390,8 @@ export function partItem(
       : [0, 0, 0]
   const angle = motion?.type === "spin" ? spinAngle(motion.speed, t) : 0
   const centre = centreOf(part)
-  const depth = depthOf(
-    [centre[0] + off[0], centre[1] + off[1], centre[2] + off[2]],
-    P,
+  const depth = settle(
+    depthOf([centre[0] + off[0], centre[1] + off[1], centre[2] + off[2]], P),
   )
   if (s.type === "pipe") {
     const pts = pipePoints(s).map(([x, y, z]) =>
@@ -1140,22 +1402,45 @@ export function partItem(
       kind: "pipe",
       depth,
       d: pathOf(pts),
-      width: Math.max(1.5, 2 * (s.r ?? 3) * pixelsPerUnit(P)),
+      width: hundredth(Math.max(1.5, 2 * (s.r ?? 3) * pixelsPerUnit(P))),
       flow: motion?.type === "flow" ? (motion.speed ?? 1) : 0,
       stream: Boolean(s.stream),
     }
   }
+  if (s.type === "rotor") {
+    const F = frameOf(
+      [s.x + off[0], s.y + off[1], (s.z ?? 0) + off[2]],
+      s.axis ?? "z",
+    )
+    const g = rotorGeometry(F, s.r, s.blades, s.chord ?? 0.15, P, angle)
+    return {
+      id: part.id,
+      kind: "solid",
+      depth,
+      paths: { ...NO_PATHS, outline: g.outline, crease: g.crease },
+      facets: g.facets,
+      marks: "",
+      detail: "",
+      dots: [],
+      topLast: false,
+      ghost: Boolean(part.ghost),
+    }
+  }
   if (s.type === "cylinder" || s.type === "lathe") {
     const { F, profile } = roundOf(s, off)
-    const g = latheGeometry(F, profile, P, {
-      open: s.type === "lathe" ? s.open : false,
-      ribs: s.ribs,
-      rings: s.rings,
-      blades: s.blades,
-      bolts: s.bolts,
-      phase: angle,
-      marker: motion?.type === "spin" && !s.blades && !s.ribs && !s.bolts,
-    })
+    const g = s.lattice
+      ? latticeGeometry(F, profile, P, s.sides ?? 4, angle)
+      : latheGeometry(F, profile, P, {
+          open: s.type === "lathe" ? s.open : false,
+          bore: s.type === "cylinder" ? s.bore : undefined,
+          sides: s.sides,
+          ribs: s.ribs,
+          rings: s.rings,
+          blades: s.blades,
+          bolts: s.bolts,
+          phase: angle,
+          marker: motion?.type === "spin" && !s.blades && !s.ribs && !s.bolts,
+        })
     return {
       id: part.id,
       kind: "solid",
@@ -1166,6 +1451,7 @@ export function partItem(
       detail: g.detail,
       dots: g.dots,
       topLast: false,
+      ghost: Boolean(part.ghost),
     }
   }
   const cx = s.x + off[0]
@@ -1216,6 +1502,7 @@ export function partItem(
     detail,
     dots: [],
     topLast: !convex,
+    ghost: Boolean(part.ghost),
   }
 }
 
@@ -1271,6 +1558,59 @@ function paintOrder(a: Bounds, b: Bounds, toward: Plane): number {
 }
 
 /**
+ * A see-through shell is painted over what is inside it, so the parts show
+ * through its faint faces and its outline stays on top. -1 when a goes first,
+ * 1 when after, 0 when neither is a ghost or they don't overlap (one that
+ * merely rests on or touches another is ordered as usual).
+ */
+function ghostOrder(
+  a: MechanismPart,
+  b: MechanismPart,
+  ba: Bounds,
+  bb: Bounds,
+): number {
+  if (Boolean(a.ghost) === Boolean(b.ghost)) return 0
+  const inside = [0, 1, 2].every(
+    (i) => ba.lo[i] < bb.hi[i] - EPS && bb.lo[i] < ba.hi[i] - EPS,
+  )
+  if (!inside) return 0
+  return a.ghost ? 1 : -1
+}
+
+/**
+ * A rotor is flat, so the side of its plane decides: a part on the viewer's
+ * side is drawn after it, a part beyond it first. -1 when a goes first, 1
+ * when after, 0 when neither is a rotor or it can't tell. Box overlap can't
+ * decide this: sails and the tower behind them overlap in every direction.
+ */
+function rotorOrder(
+  a: MechanismPart,
+  b: MechanismPart,
+  ba: Bounds,
+  bb: Bounds,
+  V: Point3,
+): number {
+  const mid = (x: Bounds): Point3 => [
+    (x.lo[0] + x.hi[0]) / 2,
+    (x.lo[1] + x.hi[1]) / 2,
+    (x.lo[2] + x.hi[2]) / 2,
+  ]
+  const side = (rotor: MechanismPart, hub: Point3, other: Point3) => {
+    if (rotor.shape.type !== "rotor") return 0
+    const n = frameOf(hub, rotor.shape.axis ?? "z").a
+    const d = dot3([other[0] - hub[0], other[1] - hub[1], other[2] - hub[2]], n)
+    const facing = dot3(V, n)
+    if (Math.abs(d) < EPS || Math.abs(facing) < 1e-6) return 0
+    return d * facing > 0 ? 1 : -1
+  }
+  if (a.shape.type === "rotor" && b.shape.type !== "rotor")
+    return -side(a, mid(ba), mid(bb))
+  if (b.shape.type === "rotor" && a.shape.type !== "rotor")
+    return side(b, mid(bb), mid(ba))
+  return 0
+}
+
+/**
  * Every part at time t, sorted back to front: a topological order over
  * the pairs paintOrder can decide, taking the farthest part (by centre
  * depth) whenever several are free.
@@ -1293,12 +1633,16 @@ export function buildScene(
     )
   })
   const toward = towardViewer(P)
+  const V = viewVector(P)
   const n = items.length
   const after: number[][] = Array.from({ length: n }, () => [])
   const blockers = new Array<number>(n).fill(0)
   for (let i = 0; i < n; i++)
     for (let j = i + 1; j < n; j++) {
-      const o = paintOrder(bounds[i], bounds[j], toward)
+      const o =
+        ghostOrder(parts[i], parts[j], bounds[i], bounds[j]) ||
+        rotorOrder(parts[i], parts[j], bounds[i], bounds[j], V) ||
+        paintOrder(bounds[i], bounds[j], toward)
       if (o < 0) {
         after[i].push(j)
         blockers[j]++
@@ -1325,6 +1669,279 @@ export function buildScene(
     for (const j of after[pick]) blockers[j]--
   }
   return out
+}
+
+// ---------------------------------------------------------------------------
+// Review: structure checks on a finished figure
+
+export type MechanismNoteKind =
+  | "floating"
+  | "buried"
+  | "scale"
+  | "plain"
+  | "sparse"
+  | "accent"
+  | "hidden"
+  | "ghosts"
+
+export interface MechanismNote {
+  kind: MechanismNoteKind
+  /** One line for the model, naming the parts by label. */
+  message: string
+}
+
+/** How far apart two parts can be and still count as touching. */
+const TOUCH = 2
+
+const touches = (a: Bounds, b: Bounds) =>
+  [0, 1, 2].every(
+    (i) => a.lo[i] <= b.hi[i] + TOUCH && b.lo[i] <= a.hi[i] + TOUCH,
+  )
+
+const isStream = (p: MechanismPart) =>
+  p.shape.type === "pipe" && Boolean(p.shape.stream)
+
+const hasDetail = (p: MechanismPart) => {
+  const s = p.shape
+  if (s.type === "gear" || s.type === "rotor") return true
+  if (s.type === "box") return Boolean(s.pattern)
+  if (s.type === "cylinder" || s.type === "lathe")
+    return Boolean(
+      s.ribs || s.rings?.length || s.blades || s.bolts || s.sides || s.lattice,
+    )
+  return false
+}
+
+/** A closed round body's radius at s along its axis (the larger at a step), or -1 off its ends. */
+function radiusAt(profile: [number, number][], s: number) {
+  let r = -1
+  for (let i = 0; i + 1 < profile.length; i++) {
+    const [s0, r0] = profile[i]
+    const [s1, r1] = profile[i + 1]
+    if (s < s0 - EPS || s > s1 + EPS) continue
+    const f = s1 > s0 ? Math.min(1, Math.max(0, (s - s0) / (s1 - s0))) : 1
+    r = Math.max(r, s1 > s0 ? r0 + (r1 - r0) * f : Math.max(r0, r1))
+  }
+  return r
+}
+
+/** How far inside a solid a part must stay, everywhere, to be hidden; a part flush with a face shows. */
+const HIDDEN = 1
+
+/** True when every point lies strictly within the solid `host` (a box or a closed round body). */
+function enclosedBy(points: Point3[], host: MechanismPart, hostBounds: Bounds) {
+  const s = host.shape
+  // A see-through shell or a bored body hides nothing inside it.
+  if (host.ghost || (s.type === "cylinder" && s.bore)) return false
+  if (s.type === "box") {
+    if (s.h <= 0) return false
+    return points.every((p) =>
+      [0, 1, 2].every(
+        (i) =>
+          p[i] >= hostBounds.lo[i] + HIDDEN &&
+          p[i] <= hostBounds.hi[i] - HIDDEN,
+      ),
+    )
+  }
+  // An open or lattice body hides nothing inside it.
+  if (
+    (s.type === "cylinder" || s.type === "lathe") &&
+    !s.lattice &&
+    !(s.type === "lathe" && s.open)
+  ) {
+    const { F, profile } = roundOf(s)
+    return points.every((p) => {
+      const d: Point3 = [p[0] - F.o[0], p[1] - F.o[1], p[2] - F.o[2]]
+      const along = dot3(d, F.a)
+      const radial = Math.hypot(dot3(d, F.u), dot3(d, F.w))
+      const r = radiusAt(profile, along)
+      return (
+        along >= profile[0][0] + HIDDEN &&
+        along <= profile[profile.length - 1][0] - HIDDEN &&
+        radial <= r - HIDDEN
+      )
+    })
+  }
+  return false
+}
+
+/**
+ * The blades a part carries: a rotor, or a round part with blades on its far
+ * end face. Its axis frame, the face's position along it and its radius.
+ */
+function bladesOf(p: MechanismPart) {
+  const s = p.shape
+  // A rotor's blades show from both sides; a body's blades only on its end face.
+  if (s.type === "rotor")
+    return {
+      F: frameOf([s.x, s.y, s.z ?? 0], s.axis ?? "z"),
+      at: 0,
+      r: s.r,
+      bothSides: true,
+    }
+  if ((s.type === "cylinder" || s.type === "lathe") && s.blades) {
+    const { F, profile } = roundOf(s)
+    const end = profile[profile.length - 1]
+    return { F, at: end[0], r: end[1], bothSides: false }
+  }
+  return null
+}
+
+/** A solid, flat disc on the same axis as a bladed part, close to and as wide as its blades, so it hides them. */
+function discOver(
+  blades: NonNullable<ReturnType<typeof bladesOf>>,
+  q: MechanismPart,
+) {
+  const s = q.shape
+  if (q.ghost || s.type !== "cylinder" || s.bore) return false
+  if (s.h > 0.2 * s.r || s.r < 0.9 * blades.r) return false
+  const { F, profile } = roundOf(s)
+  if (dot3(F.a, blades.F.a) < 0.999) return false
+  const d: Point3 = [
+    F.o[0] - blades.F.o[0],
+    F.o[1] - blades.F.o[1],
+    F.o[2] - blades.F.o[2],
+  ]
+  const along = dot3(d, blades.F.a) - blades.at
+  const across = Math.hypot(
+    d[0] - blades.F.a[0] * dot3(d, blades.F.a),
+    d[1] - blades.F.a[1] * dot3(d, blades.F.a),
+    d[2] - blades.F.a[2] * dot3(d, blades.F.a),
+  )
+  const reach = 0.4 * blades.r
+  const lo = along + profile[0][0]
+  const hi = along + profile[profile.length - 1][0]
+  if (across > 0.3 * blades.r || lo > reach || hi < -reach) return false
+  // Blades on an end face are only hidden by a disc that reaches that face or lies past it.
+  return blades.bothSides || hi > 0.5
+}
+
+const named = (parts: MechanismPart[]) =>
+  parts.map((p) => `'${p.label}'`).join(", ")
+
+/**
+ * Checks a finished figure for what makes it read wrong, though the schema
+ * accepts it: parts floating apart from the object, parts hidden inside a
+ * solid, an object far from the size the drawing is tuned for, no surface
+ * detail, too few parts, too many accents. Notes, not errors: the figure
+ * still renders. A host can send reviewMessage back to the model once so it
+ * can redraw; the agent eval counts the notes.
+ */
+export function reviewMechanism(
+  input: (Partial<MechanismPart> | undefined)[] | undefined,
+): MechanismNote[] {
+  const parts = readyParts(input)
+  if (parts.length < 2) return []
+  const notes: MechanismNote[] = []
+  const bodies = parts.filter((p) => !isStream(p))
+  const bounds = bodies.map((p) =>
+    boundsOf(extremesOf({ ...p, motion: undefined })),
+  )
+  const solid = (i: number) => bodies[i].shape.type !== "pipe"
+
+  // Floating: solids outside the largest group of parts that touch.
+  const group = bodies.map((_, i) => i)
+  const root = (i: number): number => {
+    let k = i
+    while (group[k] !== k) k = group[k]
+    return k
+  }
+  for (let i = 0; i < bodies.length; i++)
+    for (let j = i + 1; j < bodies.length; j++)
+      if (touches(bounds[i], bounds[j])) group[root(i)] = root(j)
+  const size = new Map<number, number>()
+  bodies.forEach((_, i) => {
+    if (solid(i)) size.set(root(i), (size.get(root(i)) ?? 0) + 1)
+  })
+  const main = [...size.entries()].sort((a, b) => b[1] - a[1])[0]?.[0]
+  const loose = bodies.filter((_, i) => solid(i) && root(i) !== main)
+  if (loose.length)
+    notes.push({
+      kind: "floating",
+      message: `${named(loose)} ${loose.length === 1 ? "touches" : "touch"} nothing joined to the rest of the object. Move ${loose.length === 1 ? "it" : "them"} so ${loose.length === 1 ? "it rests" : "they rest"} on or ${loose.length === 1 ? "joins" : "join"} another part.`,
+    })
+
+  // Buried: a part entirely inside another solid, so it can't be seen.
+  const buried: MechanismPart[] = []
+  bodies.forEach((p, i) => {
+    if (p.shape.type === "pipe") return
+    const points = extremesOf({ ...p, motion: undefined })
+    const host = bodies.findIndex(
+      (q, j) =>
+        j !== i &&
+        q.shape.type !== "pipe" &&
+        enclosedBy(points, q, bounds[j]) &&
+        !enclosedBy(extremesOf({ ...q, motion: undefined }), p, bounds[i]),
+    )
+    if (host >= 0) buried.push(p)
+  })
+  if (buried.length)
+    notes.push({
+      kind: "buried",
+      message: `${named(buried)} ${buried.length === 1 ? "is" : "are"} entirely inside another solid part, so ${buried.length === 1 ? "it" : "they"} can't be seen. Move ${buried.length === 1 ? "it" : "them"} to the surface, or leave ${buried.length === 1 ? "it" : "them"} out.`,
+    })
+
+  // Scale: the drawing's detail is tuned for a longest side of 200 to 260.
+  const all = boundsOf(bounds.flatMap((b) => [b.lo, b.hi]))
+  const span = Math.max(...[0, 1, 2].map((i) => all.hi[i] - all.lo[i]))
+  if (span < 120 || span > 420)
+    notes.push({
+      kind: "scale",
+      message: `The object is ${Math.round(span)} units across. Scale every part so its longest side is about 200 to 260 units.`,
+    })
+
+  // Hidden blades: a solid disc over a fan or rotor, which the blades show through only with a bore.
+  const covers: MechanismPart[] = []
+  const covered: MechanismPart[] = []
+  for (const p of parts) {
+    const blades = bladesOf(p)
+    if (!blades) continue
+    for (const q of parts) {
+      if (q === p || !discOver(blades, q)) continue
+      if (!covers.includes(q)) covers.push(q)
+      if (!covered.includes(p)) covered.push(p)
+    }
+  }
+  if (covers.length)
+    notes.push({
+      kind: "hidden",
+      message: `${named(covers)} ${covers.length === 1 ? "is a solid disc" : "are solid discs"} over ${named(covered)}, so the blades are hidden from that side. Give ${covers.length === 1 ? "it" : "each"} a bore (a hollow centre, so it is a ring) and the blades show through.`,
+    })
+
+  const solids = parts.filter((p) => p.shape.type !== "pipe")
+  if (solids.length >= 3 && !solids.some(hasDetail))
+    notes.push({
+      kind: "plain",
+      message:
+        "No part has surface detail. Where the real object has them, add windows, vents or panels to boxes, and ribs, rings, blades or bolts to round parts.",
+    })
+  if (parts.length < 6)
+    notes.push({
+      kind: "sparse",
+      message: `Only ${parts.length} parts. A real object reads through its parts: use 8 to 40.`,
+    })
+  const ghosts = parts.filter((p) => p.ghost)
+  if (ghosts.length > 2)
+    notes.push({
+      kind: "ghosts",
+      message: `${ghosts.length} parts are ghosts (${named(ghosts)}). A see-through shell is only for the one casing that hides the workings when the user asks how it works; draw the rest solid, so the object stays recognisable.`,
+    })
+  const accents = parts.filter((p) => p.accent)
+  if (accents.length > 2)
+    notes.push({
+      kind: "accent",
+      message: `${accents.length} parts are accent (${named(accents)}). Keep one or two: the thing the figure is about.`,
+    })
+  return notes
+}
+
+/** The notes worded as a tool result for the model, or null when there are none. */
+export function reviewMessage(notes: MechanismNote[]): string | null {
+  if (!notes.length) return null
+  return [
+    "The figure was shown, but it may not read as the real thing. If these are right, call show_mechanism again with the corrected figure, without mentioning this check (the user doesn't see it); if not, leave it and don't reply:",
+    ...notes.map((n) => `- ${n.message}`),
+  ].join("\n")
 }
 
 // ---------------------------------------------------------------------------

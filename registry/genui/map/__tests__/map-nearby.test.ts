@@ -162,22 +162,20 @@ describe("copy", () => {
     assert.equal(formatPrice(12, "NOPE", { locale: "en-GB" }), "12 NOPE")
   })
 
-  // ICU 78 (Node 26) puts thin spaces around the range dash; older ICU doesn't.
-  const tightDash = (s: string) => s.replace(/\s*–\s*/g, "–")
-
   it("formats the stay's dates as a range", () => {
-    assert.equal(tightDash(formatStayDates("2026-11-14", "2026-11-19", "en-GB")), "14–19 Nov")
+    assert.equal(formatStayDates("2026-11-14", "2026-11-19", "en-GB"), "14–19 Nov")
+    assert.equal(formatStayDates("2026-11-28", "2026-12-03", "en-GB"), "28 Nov – 3 Dec")
+    assert.equal(formatStayDates("2026-11-14", "2026-11-19", "en-US"), "Nov 14–19")
+    assert.equal(formatStayDates("2026-11-14", "2026-11-19", "de-DE"), "14.–19. Nov.")
     assert.equal(formatStayDates("2026-11-19", "2026-11-14", "en-GB"), "")
     assert.equal(formatStayDates("2026-02-30", "2026-03-02", "en-GB"), "")
   })
 
   it("builds the search line from what it has", () => {
     assert.equal(
-      tightDash(
-        searchLine(
-          { location: "Paris", total: 1624, checkIn: "2026-11-14", checkOut: "2026-11-19", adults: 2 },
-          "en-GB",
-        ),
+      searchLine(
+        { location: "Paris", total: 1624, checkIn: "2026-11-14", checkOut: "2026-11-19", adults: 2 },
+        "en-GB",
       ),
       "1,624 stays in Paris · 14–19 Nov · 5 nights · 2 adults",
     )

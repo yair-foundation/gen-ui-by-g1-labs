@@ -4,7 +4,8 @@ import { z } from "zod"
  * Mechanism: the agent's contract.
  *
  * A machine, device or building drawn as an isometric figure, assembled from
- * solids (boxes, cylinders, turned lathe profiles on any axis, gears, pipes)
+ * solids (boxes, cylinders, turned lathe profiles on any axis, faceted or as
+ * open lattice, rotors, gears, pipes)
  * with surface detail (windows, vents, blades, ribs, seams, bolts) and parts
  * that move: gears and rotors spin, flow runs along pipes, parts slide. The
  * user turns the view, pauses the motion and inspects each part. Inspired by
@@ -31,14 +32,14 @@ const roundDetail = {
   ribs: z
     .number()
     .int()
-    .min(3)
+    .min(0)
     .max(64)
     .optional()
     .describe(
-      "Lines along the body at even angles: fins, flutes, a knurl, cooling ribs.",
+      "Lines along the body at even angles: fins, flutes, a knurl, cooling ribs. 3 to 64; 0 or none for no ribs.",
     ),
   rings: z
-    .array(z.number().min(0).max(800))
+    .array(z.number().min(-800).max(800))
     .max(12)
     .optional()
     .describe(
@@ -51,7 +52,7 @@ const roundDetail = {
     .max(48)
     .optional()
     .describe(
-      "Vanes on the end face at the far end of the axis (a cylinder's top, a lathe's last profile point): a fan, turbine, propeller or wheel spokes. Spin turns them.",
+      "Vanes drawn on the end face at the far end of the axis (a cylinder's top, a lathe's last profile point): a fan inside its duct, a turbine wheel, wheel spokes. Spin turns them. For blades with open air between them (windmill sails, a propeller, a wind turbine, a helicopter rotor) use a rotor part.",
     ),
   bolts: z
     .number()
@@ -60,6 +61,21 @@ const roundDetail = {
     .max(36)
     .optional()
     .describe("A bolt circle on that same end face: a flange, a cap, a hub."),
+  sides: z
+    .number()
+    .int()
+    .min(3)
+    .max(12)
+    .optional()
+    .describe(
+      "Flat sides instead of a round body: 4 for a square tower, obelisk or pyramid (a square lathe tapering to r 0), 6 for a hex nut or pencil.",
+    ),
+  lattice: z
+    .boolean()
+    .optional()
+    .describe(
+      "Draw the body as an open iron truss you see through: legs at the corners (sides, default 4), a ring at each profile point and X-bracing on every face. The Eiffel Tower, an electricity pylon, a crane's mast or jib, a radio mast.",
+    ),
 }
 
 const base = {
@@ -102,6 +118,11 @@ export const mechanismShapeSchema = z.discriminatedUnion("type", [
     r: size.describe("Radius."),
     h: height.describe("Length along the axis."),
     axis,
+    bore: size
+      .optional()
+      .describe(
+        "Radius of a hole through the centre, so the ends are rings and you see into it: a tube, a rim or hoop, a tyre, a fan cage, a flange, a cup. Use it wherever the real part is open in the middle, not a solid disc.",
+      ),
     ...roundDetail,
   }),
   z.object({
@@ -113,7 +134,9 @@ export const mechanismShapeSchema = z.discriminatedUnion("type", [
       .describe("Where the axis starts (s = 0), z. Default 0."),
     axis,
     profile: z
-      .array(z.tuple([z.number().min(0).max(800), z.number().min(0).max(400)]))
+      .array(
+        z.tuple([z.number().min(-800).max(800), z.number().min(0).max(400)]),
+      )
       .min(2)
       .max(24)
       .describe(
@@ -126,6 +149,30 @@ export const mechanismShapeSchema = z.discriminatedUnion("type", [
         "Hollow with no end faces, so you see into it: a bell, horn, nozzle, intake or speaker cone.",
       ),
     ...roundDetail,
+  }),
+  z.object({
+    type: z.literal("rotor"),
+    x: coord.describe("Hub centre, x."),
+    y: coord.describe("Hub centre, y."),
+    z: height.optional().describe("Hub centre, z. Default 0."),
+    axis: axis.describe(
+      "The axis the rotor turns around. x or y for windmill sails, a propeller or a wind turbine facing that way; z (default) for a helicopter rotor or ceiling fan.",
+    ),
+    r: size.describe("Radius to the blade tips."),
+    blades: z
+      .number()
+      .int()
+      .min(2)
+      .max(12)
+      .describe("Number of blades or sails."),
+    chord: z
+      .number()
+      .min(0.04)
+      .max(0.6)
+      .optional()
+      .describe(
+        "Blade width as a fraction of the radius. Default 0.15; about 0.3 for windmill sails, 0.08 for a wind turbine or helicopter rotor.",
+      ),
   }),
   z.object({
     type: z.literal("gear"),
@@ -149,14 +196,14 @@ export const mechanismShapeSchema = z.discriminatedUnion("type", [
       .min(2)
       .max(24)
       .describe(
-        "[x, y, z] points along the pipe's centre line, in the direction anything flows.",
+        "[x, y, z] points along the pipe's centre line, in the direction anything flows. Also any slender member that isn't along an axis (a connecting rod, strut, boom, brace, arm or cable): leave out motion and flow, and it draws as a solid rod.",
       ),
     r: z
       .number()
-      .min(0.5)
+      .min(0.1)
       .max(20)
       .optional()
-      .describe("Pipe radius. Default 3."),
+      .describe("Pipe radius. Default 3. Thin cables and wires can be 0.2."),
     stream: z
       .boolean()
       .optional()
@@ -215,6 +262,12 @@ export const mechanismPartSchema = z.object({
   motion: mechanismMotionSchema
     .optional()
     .describe("How the part moves. Omit for parts that stay still."),
+  ghost: z
+    .boolean()
+    .optional()
+    .describe(
+      "Draws the part as a see-through shell, so the parts inside it show: a casing, housing, cabinet, tank wall or glass cover. Use it on whatever hides the workings, instead of leaving walls off.",
+    ),
   accent: z
     .boolean()
     .optional()
@@ -229,10 +282,10 @@ export const mechanismSchema = z.object({
     .describe("The machine or object, e.g. 'Two-stage gear reduction'."),
   caption: z
     .string()
-    .max(80)
+    .max(140)
     .optional()
     .describe(
-      "One short line under the title on how it works, e.g. 'A small gear drives a big one: slower, with more torque.'",
+      "One short line under the title, up to about 80 characters, on how it works, e.g. 'A small gear drives a big one: slower, with more torque.'",
     ),
   parts: z
     .array(mechanismPartSchema)
@@ -270,9 +323,11 @@ export const mechanismGuidance = {
     "Its shape is organic (a person, an animal, a plant): this figure is built from machined solids.",
   ],
   rules: [
-    "Shape first: the object must be recognisable from its outline alone. Use its real proportions (recall the real dimensions and scale them so the longest side is about 200 to 260 units) and its real orientation: an engine lies along x, a speaker stands with its cones facing +x, a tower stands up along z.",
+    "Shape first: the object must be recognisable from its outline alone. Use its real proportions: recall the real dimensions, scale the longest side to about 200 to 260 units, and derive every other size from the real ratios, so tall things stay tall (the Empire State Building is 3 times taller than its base is wide, the Eiffel Tower 2.6 times; a bus is 4 times longer than it is wide) and its real orientation: an engine lies along x, a speaker stands with its cones facing +x, a tower stands up along z. Turn the side people recognise toward +x, the default view: an engine's intake and fan, a speaker's cones, a machine's controls and door, a vehicle's cab or front.",
     "Round bodies are cylinders or lathes on their real axis, never stood up when the real thing lies down: a nacelle, nozzle, cone, dome, bell, horn or speaker cone is a lathe profile [s, r]; two points at the same s make a shoulder, so collars, flanges and bands on a body are steps in its own profile, not extra parts; open: true is a hollow you see into.",
+    "When the user asks how something works or what is inside it, keep its outside and show the workings through it: set ghost: true on the one casing, cabinet, housing or glass cover that hides them, and place the parts inside it. Don't leave walls off, which makes the object unrecognisable. When the user just wants a 3D model or picture of the thing, draw it closed and solid, with no ghost; and never ghost a building, tower, mill, vehicle body or anything else you look at from outside. A ghost is only for what is really enclosed (a drum in a cabinet, an impeller in a casing): a speaker's cones, a door, a dial or a screen sit on the outside face of a solid body. At most one or two ghosts. Anything open in the middle (a rim, hoop, tyre, fan cage, tube, flange or cup) is a cylinder with a bore, never a solid disc, which would hide what's behind it.",
     "Make it look real with the detail fields, not extra parts: windows on buildings, vents or panels on cases, blades on fans, turbines and wheels, ribs for fins, rings for seams between sections, bolts on flanges and hubs.",
+    "Start from the recipe for its kind, then add what makes this one recognisable. Buildings and towers: stacked boxes with windows, each setback narrower, crowned by a cylinder or lathe spire or mast on z; a tapering square tower is a lathe with sides 4; an iron tower, pylon or crane mast is a lattice lathe whose profile tapers continuously from the base to the top (in one or more sections, each starting where the last ended), with floors as thin boxes. Vehicles: the body as boxes or a lathe along x (fuselage, hull, boiler, tank), wheels as y-axis cylinders with blades for spokes, propellers and rotors as rotor parts that spin. Appliances and devices: a box body with panels or vents, controls as small ribbed cylinders, screens and doors as thin boxes or flat cylinders on the face. Fans: a motor and stand behind, a rotor with hub in front, a cage of bored rings front and back, never solid discs. Engines, pumps and turbines: a ghost casing (a lathe along the shaft) with the rotor, impeller or fan inside it, and an intake with a visible fan facing +x; enclosed rotors as cylinders with blades, open ones (windmills, wind turbines) as rotor parts, flanges as profile steps with bolts, flow as pipes or streams. Washing machines, ovens and other cabinets: the closed cabinet as a ghost box with its door and controls on the +x face and the drum or workings inside. Rods, struts, arms and braces that run at an angle (a connecting rod, a crane jib): pipes with no flow. Instruments and tools: base, column, arm and working head, with tubes and lenses as lathes on their real axis. Bridges and frames: decks and towers as boxes or lattice lathes, cables as pipes.",
     "Use 8 to 40 parts, each resting on or joined to another (set z so parts sit on what's under them). No base plate unless the real thing stands on one.",
     "Move only what moves in the real machine, at believable relative speeds: rotors and fans spin about their own axis, meshing gears turn opposite ways at speeds in inverse ratio to their radii, flow runs from a pipe's first point to its last (stream: true for air or exhaust in open space). A building or other still object has no motion.",
     "Mark one or two parts as accent: the thing the figure is about.",
@@ -288,7 +343,7 @@ export const mechanismGuidance = {
 export const mechanismTool = {
   name: "show_mechanism",
   description: [
-    "Show a machine, device or building as an animated isometric 3D figure built from boxes, cylinders and turned lathe profiles on any axis, gears and pipes, with surface detail (windows, vents, blades, ribs, seams, bolts): rotors and gears spin, flow runs along pipes, parts slide. The user can turn the view, pause and inspect each part.",
+    "Show a machine, device or building as an animated isometric 3D figure built from boxes, cylinders, turned lathe profiles on any axis (round, faceted or open lattice), rotors, gears and pipes, with surface detail (windows, vents, blades, ribs, seams, bolts): rotors and gears spin, flow runs along pipes, parts slide. The user can turn the view, pause and inspect each part.",
     `Use when: ${mechanismGuidance.useWhen.join(" ")}`,
     `Avoid when: ${mechanismGuidance.avoidWhen.join(" ")}`,
     `Rules: ${mechanismGuidance.rules.join(" ")}`,

@@ -17,13 +17,18 @@ import { cn } from "@/lib/utils"
  *   turns into a faint dark tile in dark mode and swaps to the dark file.
  *   `tone="muted"` is the theme's muted grey.
  *
+ * - `size={20}`: the bare mark for table cells and dense rows (D42): no tile,
+ *   border or padding, so it needs a `darkSrc` when the mark is too dark for
+ *   a dark card.
+ *
  * Brand logos only, never photos or product thumbnails. Only http(s) URLs,
  * same-origin paths and raster data URLs load; an unsafe, missing or failing logo renders
  * `fallback` (nothing by default), never a broken image.
  */
-export type LogoTileSize = 44 | 48 | 56 | 64
+export type LogoTileSize = 20 | 44 | 48 | 56 | 64
 
 const SIZE: Record<LogoTileSize, string> = {
+  20: "size-5",
   44: "size-11 rounded-[10px]",
   48: "size-12 rounded-[10px]",
   56: "size-14 rounded-[14px]",
@@ -90,15 +95,18 @@ export function LogoTile({
     />
   )
 
+  const bare = size === 20
   return (
     <span
       aria-hidden={alt ? undefined : true}
       data-slot="logo-tile"
       className={cn(
-        "inline-flex shrink-0 items-center justify-center overflow-hidden ring-1 ring-border",
+        "inline-flex shrink-0 items-center justify-center overflow-hidden",
         SIZE[size],
-        fit === "mark" && "p-2.5",
-        tone === "muted" ? "bg-muted" : cn("bg-white", dark && "dark:bg-white/[0.08]"),
+        !bare && "ring-1 ring-border",
+        !bare && fit === "mark" && "p-2.5",
+        !bare &&
+          (tone === "muted" ? "bg-muted" : cn("bg-white", dark && "dark:bg-white/[0.08]")),
         className,
       )}
     >

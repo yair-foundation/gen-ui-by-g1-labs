@@ -118,6 +118,7 @@ export const slotPickerGuidance = {
     "Always set timezone to the zone the times are in, and use the user's zone when you can.",
     "Include taken slots as available: false when it helps the user see the shape of the day; drop days with nothing at all.",
     "Book only the slotId returned with action 'select', and re-check it is still free before booking.",
+    "For a single booking the slot picker is the whole interaction: don't wrap it in a guided flow with a review step; confirm the chosen time in text, or with a change preview when the booking needs approval.",
     "To show the chosen time in another component (a bind), bind to the result's label, which reads like 'Monday, October 12 at 9:30 AM'; start is the raw value.",
   ],
 } as const

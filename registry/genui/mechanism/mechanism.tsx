@@ -71,6 +71,9 @@ const FLOW_PX_PER_SECOND = 30
 
 const SHADE_LEVELS = [0, 1, 2, 3] as const
 
+/** How much of a see-through shell's faces shows: enough to read as glass. */
+const GHOST_OPACITY = 0.3
+
 /**
  * Tones by facing, darkest (turned from the light) to lightest, then the
  * top face. Light mode adds ink to darken; dark mode adds light to brighten,
@@ -133,7 +136,9 @@ function Solid({
       ? "stroke-sky-600 dark:stroke-sky-400"
       : "stroke-foreground/75"
   const facetClass = accent ? ACCENT_FACET_CLASS : FACET_CLASS
-  return (
+  // The faces: opaque for a solid, faint for a see-through shell (its fills
+  // are grouped, so overlapping faces fade together, not one over another).
+  const faces = (
     <>
       {item.facets?.map((f, i) => (
         <path
@@ -146,7 +151,9 @@ function Solid({
           className={facetClass[f.shade] ?? facetClass[2]}
         />
       ))}
-      {item.paths.fill && <path d={item.paths.fill} className="fill-card" />}
+      {!item.ghost && item.paths.fill && (
+        <path d={item.paths.fill} className="fill-card" />
+      )}
       {SHADE_LEVELS.map((level) =>
         item.paths.shades[level] ? (
           <path
@@ -162,6 +169,11 @@ function Solid({
           className={accent ? ACCENT_TOP_CLASS : TOP_CLASS}
         />
       )}
+    </>
+  )
+  return (
+    <>
+      {item.ghost ? <g opacity={GHOST_OPACITY}>{faces}</g> : faces}
       {item.detail && (
         <path
           d={item.detail}

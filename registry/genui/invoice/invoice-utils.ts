@@ -4,7 +4,10 @@
  * on the server and to unit-test in Node.
  */
 
-import { DEFAULT_LOCALE } from "@/components/genui/locale";
+import {
+  DEFAULT_LOCALE,
+  formatRangeWithDash,
+} from "@/components/genui/locale";
 
 export type InvoiceKind = "invoice" | "bill" | "receipt";
 
@@ -263,6 +266,23 @@ export function parseDate(iso: string | undefined): Date | null {
   }
   const t = Date.parse(iso);
   return Number.isNaN(t) ? null : new Date(t);
+}
+
+/** "Nov 14 – 19, 2026": the billing period, its dash set the same everywhere. */
+export function formatPeriod(
+  start: string | undefined,
+  end: string | undefined,
+  locale: string = DEFAULT_LOCALE,
+): string | null {
+  const a = parseDate(start);
+  const b = parseDate(end);
+  if (!a || !b) return null;
+  const fmt = new Intl.DateTimeFormat(locale, { dateStyle: "medium" });
+  try {
+    return formatRangeWithDash(fmt, a, b);
+  } catch {
+    return `${fmt.format(a)} – ${fmt.format(b)}`;
+  }
 }
 
 /** A host `now` (Date, ISO string or epoch ms) as epoch ms, or null. */

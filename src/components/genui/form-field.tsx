@@ -180,10 +180,9 @@ function FormField({
             id={labelId}
             htmlFor={htmlFor}
             className={cn(
-              "pointer-events-none absolute left-4 z-10 max-w-[calc(100%-3rem)] truncate text-muted-foreground transition-all duration-150 ease-out motion-reduce:transition-none",
-              "top-[18px] text-[15px] leading-5",
-              "group-focus-within/ff:top-2 group-focus-within/ff:text-[12px] group-focus-within/ff:leading-4 group-focus-within/ff:font-medium",
-              "group-data-[up]/ff:top-2 group-data-[up]/ff:text-[12px] group-data-[up]/ff:leading-4 group-data-[up]/ff:font-medium",
+              "pointer-events-none absolute top-[18px] left-4 z-10 max-w-[calc(100%-3rem)] origin-top-left truncate text-[15px] leading-5 text-muted-foreground transition-[translate,scale] duration-150 ease-out motion-reduce:transition-none",
+              "group-focus-within/ff:-translate-y-2.5 group-focus-within/ff:scale-80 group-focus-within/ff:font-medium",
+              "group-data-[up]/ff:-translate-y-2.5 group-data-[up]/ff:scale-80 group-data-[up]/ff:font-medium",
             )}
           >
             {label}

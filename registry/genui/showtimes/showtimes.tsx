@@ -465,10 +465,10 @@ export function Showtimes({
                         <span
                           aria-hidden
                           className={cn(
-                            "mt-1 w-0.5 rounded-full transition-all",
+                            "mt-1 h-4 w-0.5 origin-top rounded-full transition-[scale,background-color]",
                             checked
-                              ? "h-4 bg-choice"
-                              : "h-3 bg-muted-foreground/40",
+                              ? "bg-choice"
+                              : "scale-y-75 bg-muted-foreground/40",
                           )}
                         />
                       </button>

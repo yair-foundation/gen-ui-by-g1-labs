@@ -11,7 +11,7 @@
  * Inputs are typed loosely because the tool call may still be streaming.
  */
 
-import { DEFAULT_LOCALE } from "@/components/genui/locale";
+import { DEFAULT_LOCALE, formatRangeWithDash } from "@/components/genui/locale";
 import type {
   MapAnchor,
   MapPickReason,
@@ -458,7 +458,7 @@ export function formatStayDates(
     month: "short",
     timeZone: "UTC",
   });
-  return fmt.formatRange(new Date(a), new Date(b));
+  return formatRangeWithDash(fmt, new Date(a), new Date(b));
 }
 
 const plural = (n: number, one: string, many: string, locale: string) =>

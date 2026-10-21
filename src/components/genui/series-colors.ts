@@ -61,3 +61,18 @@ export const SERIES_FILL = [
 
 /** "Other" and anything folded: a neutral grey, never a sixth hue. */
 export const OTHER_COLOR = "color-mix(in oklab, var(--foreground) 28%, var(--card))"
+
+/**
+ * Tag classes per series, for a closed list of categories in a table column
+ * (D43): a tinted fill like the badges' with text in the same hue, deepened in
+ * light and lifted in dark to stay above 4.5:1 at 13px (worst: Wasabi, 5.0:1
+ * light; Cassis, 5.3:1 dark). Past the fifth option, tags stay blue. Needs
+ * SERIES_VARS.
+ */
+export const SERIES_TAG = [
+  "bg-[color-mix(in_oklab,var(--series-1)_12%,transparent)] text-[color-mix(in_oklab,var(--series-1)_70%,black)] dark:bg-[color-mix(in_oklab,var(--series-1)_14%,transparent)] dark:text-[color-mix(in_oklab,var(--series-1)_75%,white)]",
+  "bg-[color-mix(in_oklab,var(--series-2)_12%,transparent)] text-[color-mix(in_oklab,var(--series-2)_70%,black)] dark:bg-[color-mix(in_oklab,var(--series-2)_14%,transparent)] dark:text-[color-mix(in_oklab,var(--series-2)_75%,white)]",
+  "bg-[color-mix(in_oklab,var(--series-3)_12%,transparent)] text-[color-mix(in_oklab,var(--series-3)_70%,black)] dark:bg-[color-mix(in_oklab,var(--series-3)_14%,transparent)] dark:text-[color-mix(in_oklab,var(--series-3)_75%,white)]",
+  "bg-[color-mix(in_oklab,var(--series-4)_12%,transparent)] text-[color-mix(in_oklab,var(--series-4)_70%,black)] dark:bg-[color-mix(in_oklab,var(--series-4)_14%,transparent)] dark:text-[color-mix(in_oklab,var(--series-4)_75%,white)]",
+  "bg-[color-mix(in_oklab,var(--series-5)_12%,transparent)] text-[color-mix(in_oklab,var(--series-5)_70%,black)] dark:bg-[color-mix(in_oklab,var(--series-5)_14%,transparent)] dark:text-[color-mix(in_oklab,var(--series-5)_75%,white)]",
+] as const

@@ -42,6 +42,7 @@ import {
   describeIssues,
   documentTitle,
   formatMoney,
+  formatPeriod,
   isOverdue,
   isPayable,
   parseDate,
@@ -176,21 +177,6 @@ const dateFormat = (locale: string) =>
 function formatDate(iso: string | undefined, locale: string) {
   const d = parseDate(iso);
   return d ? dateFormat(locale).format(d) : null;
-}
-
-function formatPeriod(
-  start: string | undefined,
-  end: string | undefined,
-  locale: string,
-) {
-  const a = parseDate(start);
-  const b = parseDate(end);
-  if (!a || !b) return null;
-  try {
-    return dateFormat(locale).formatRange(a, b);
-  } catch {
-    return `${dateFormat(locale).format(a)} – ${dateFormat(locale).format(b)}`;
-  }
 }
 
 /**

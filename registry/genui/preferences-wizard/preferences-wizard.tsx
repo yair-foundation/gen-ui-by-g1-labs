@@ -299,9 +299,9 @@ function CardsField({
                   {checked && (
                     <motion.span
                       key="check"
-                      initial={{ scale: 0 }}
-                      animate={{ scale: 1 }}
-                      exit={{ scale: 0 }}
+                      initial={{ scale: 0.9, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      exit={{ scale: 0.9, opacity: 0 }}
                       transition={genuiMotion.snappy}
                       className="flex"
                     >

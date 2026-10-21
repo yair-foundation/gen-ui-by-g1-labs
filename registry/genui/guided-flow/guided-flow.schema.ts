@@ -143,6 +143,7 @@ export const guidedFlowGuidance = {
   ],
   avoidWhen: [
     "You only need one or two answers. Ask in text or use a question stepper.",
+    "The only thing to choose is a time, such as booking one call from open slots. Use a slot picker.",
     "You are collecting a single record with many fields and no order. Use a form.",
     "The task needs more than 5 steps. Split it, or do part of it yourself.",
   ],

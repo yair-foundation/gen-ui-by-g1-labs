@@ -209,6 +209,7 @@ export const calendarGuidance = {
     "Pass the whole range you fetched, including free events, so overlaps and conflicts are accurate.",
     "Use proposals for every change; give each a one-line reason. For move and cancel, set eventId to the existing event.",
     "Without proposals the calendar is display-only and returns nothing.",
+    "To show another stretch of time ('only the next 10 days'), call it again with a new range and view: agenda lists any number of days, week shows 7 at a time, month shows the grid. Its look is fixed; say so if asked to restyle it.",
     "Write only the accepted proposal ids from an 'apply' result. On 'revise' or 'dismiss', write nothing.",
   ],
 } as const

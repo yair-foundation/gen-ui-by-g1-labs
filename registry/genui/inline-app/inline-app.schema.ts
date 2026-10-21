@@ -64,6 +64,8 @@ export const inlineAppGuidance = {
   ],
   avoidWhen: [
     "A catalog component covers it (a form, a chart, a timer, a calculator, a checklist). Always prefer the catalog.",
+    "The user asks to change something already shown: another look, fewer days, a score drawn as a share of 100. Call that component again with new arguments, or the catalog component that draws it (a donut, a segment bar); if the catalog can't give that look, say so in one line. Never rebuild it as an app.",
+    "The user names a UI element (a button, a card) to see one. Show a catalog component that has it, or answer in text.",
     "It collects personal data, credentials or payment details. Never.",
     "It needs the network, external images, fonts or libraries. There is none.",
     "It is static content. Write text or use a display component.",

@@ -37,6 +37,7 @@ export const summaryIcons = [
   "route",
   "target",
   "cloud-sun",
+  "trending-up",
 ] as const
 
 export type SummaryIcon = (typeof summaryIcons)[number]
@@ -53,11 +54,14 @@ export const summaryFactSchema = z.object({
     .describe(
       "A change next to the value, e.g. '+11%' or '-3%'. Renders as a green badge for an increase and a red one for a decrease. Put the plain value in 'value'.",
     ),
+  // Decoration only: a name outside the list is dropped rather than failing
+  // the whole card. The tool's JSON schema still lists the names.
   icon: z
     .enum(summaryIcons)
     .optional()
+    .catch(undefined)
     .describe(
-      "Optional icon that makes the fact scannable: calendar for dates, users for people, wallet for money. Use it on every fact or on none.",
+      "Optional icon that makes the fact scannable: calendar for dates, users for people, wallet for money, trending-up for a rate or growth. Use it on every fact or on none.",
     ),
 })
 
@@ -106,10 +110,12 @@ export const summaryCardGuidance = {
     "There is one fact to report. Say it in a sentence.",
     "You are listing many records with the same fields. Use a data table.",
     "The facts are generic filler, such as 'Difficulty: Easy' when nobody asked.",
+    "You are confirming an action that just finished (an order placed, a record changed). Use a result receipt when its tool returned success; otherwise say it in a sentence.",
   ],
   rules: [
     "Use it once, at the top of the reply.",
     "Keep facts to 2–6 short label/value pairs, in the order the user cares about.",
+    "Each value is one short phrase, never a list. When the answer also has items the user works through (open tasks, next steps), put them in a checklist under the card, both in a stack.",
     "Only set badge for a real state; never as decoration.",
   ],
 } as const

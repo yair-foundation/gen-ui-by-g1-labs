@@ -257,10 +257,10 @@ export function Checkpoint({
                         >
                           <span
                             className={cn(
-                              "rounded-full transition-all",
+                              "size-2.5 rounded-full transition-[scale,background-color]",
                               isCurrent
-                                ? "size-2.5 bg-foreground"
-                                : "size-2 bg-muted-foreground/50",
+                                ? "bg-foreground"
+                                : "scale-80 bg-muted-foreground/50",
                             )}
                           />
                         </span>

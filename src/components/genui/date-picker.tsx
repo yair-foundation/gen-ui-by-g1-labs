@@ -30,6 +30,10 @@ export type DatePickerProps = {
   step?: number
   placeholder?: string
   disabled?: boolean
+  /** Opens the calendar on mount, e.g. when a table cell starts editing. */
+  defaultOpen?: boolean
+  /** Called when the calendar opens or closes, by a pick or by dismissing it. */
+  onOpenChange?: (open: boolean) => void
   id?: string
   "aria-label"?: string
   className?: string
@@ -80,12 +84,18 @@ function DatePicker({
   step = 15,
   placeholder,
   disabled,
+  defaultOpen = false,
+  onOpenChange,
   id,
   className,
   ...props
 }: DatePickerProps) {
   const locale = useGenUILocale()
-  const [open, setOpen] = React.useState(false)
+  const [open, setOpenState] = React.useState(defaultOpen)
+  const setOpen = (next: boolean) => {
+    setOpenState(next)
+    onOpenChange?.(next)
+  }
   const { day, time } = splitValue(type, value)
   const selected = parseDay(day)
   const today = new Date()

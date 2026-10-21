@@ -142,6 +142,7 @@ export const generatedFormGuidance = {
     "You need one or two decisions. Use the question stepper or ask in a sentence.",
     "You can find the values yourself in data, files or earlier messages. Look them up and prefill or skip them.",
     "The user is choosing among records you fetched. Use an entity picker.",
+    "You have no tool that would act on the answers (you can't send the invites, book the trip or file the form). Say what you can't do in a sentence instead.",
   ],
   rules: [
     "Never ask for passwords, payment card numbers, bank details or government IDs. Send the user to the system's own secure page instead.",

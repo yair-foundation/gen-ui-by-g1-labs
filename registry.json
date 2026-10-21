@@ -7,7 +7,7 @@
       "name": "genui-theme",
       "type": "registry:theme",
       "title": "GenUI Theme",
-      "description": "The GenUI palette: neutral grays after Halaska UI, white bordered cards on a #fafafa page in light, and pure black hollow bordered cards in dark; a violet `choice` accent for selection and active interaction; translucent fills. Optional; components also work with any shadcn theme. Text uses Geist (load it with next/font and expose it as --font-sans); big figures use Instrument Serif (expose it as --font-instrument-serif).",
+      "description": "The GenUI palette: neutral grays after Halaska UI, white bordered cards on a #fafafa page in light, and pure black hollow bordered cards in dark; a violet `choice` accent for selection and active interaction; translucent fills. Optional; components also work with any shadcn theme. Text uses Geist (load it with next/font and expose it as --font-sans); big figures use Instrument Serif (expose it as --font-instrument-serif); the CD Player's handwritten disc lettering uses Gochi Hand (expose it as --font-gochi-hand).",
       "cssVars": {
         "theme": {
           "color-brand": "var(--brand)",
@@ -22,6 +22,7 @@
           "font-display": "var(--font-sans), 'Geist', ui-sans-serif, system-ui, sans-serif",
           "color-choice": "var(--choice)",
           "font-figure": "var(--font-instrument-serif), 'Instrument Serif', ui-serif, Georgia, serif",
+          "font-marker": "var(--font-gochi-hand), 'Gochi Hand', cursive",
           "color-chart-1": "var(--chart-1)",
           "color-chart-2": "var(--chart-2)",
           "color-chart-3": "var(--chart-3)",
@@ -521,7 +522,8 @@
         "motion"
       ],
       "registryDependencies": [
-        "badge"
+        "badge",
+        "tooltip"
       ],
       "files": [
         {
@@ -646,7 +648,8 @@
       ],
       "registryDependencies": [
         "https://animate-ui.com/r/components-base-tabs.json",
-        "https://animate-ui.com/r/primitives-effects-auto-height.json"
+        "https://animate-ui.com/r/primitives-effects-auto-height.json",
+        "tooltip"
       ],
       "files": [
         {
@@ -680,7 +683,9 @@
       "dependencies": [
         "zod"
       ],
-      "registryDependencies": [],
+      "registryDependencies": [
+        "tooltip"
+      ],
       "files": [
         {
           "path": "registry/genui/layout-columns/layout-columns.tsx",
@@ -713,7 +718,9 @@
       "dependencies": [
         "zod"
       ],
-      "registryDependencies": [],
+      "registryDependencies": [
+        "tooltip"
+      ],
       "files": [
         {
           "path": "registry/genui/layout-stack/layout-stack.tsx",
@@ -746,7 +753,9 @@
       "dependencies": [
         "zod"
       ],
-      "registryDependencies": [],
+      "registryDependencies": [
+        "tooltip"
+      ],
       "files": [
         {
           "path": "registry/genui/layout-grid/layout-grid.tsx",
@@ -779,7 +788,9 @@
       "dependencies": [
         "zod"
       ],
-      "registryDependencies": [],
+      "registryDependencies": [
+        "tooltip"
+      ],
       "files": [
         {
           "path": "registry/genui/layout-split/layout-split.tsx",
@@ -812,7 +823,9 @@
       "dependencies": [
         "zod"
       ],
-      "registryDependencies": [],
+      "registryDependencies": [
+        "tooltip"
+      ],
       "files": [
         {
           "path": "registry/genui/layout-steps/layout-steps.tsx",
@@ -897,7 +910,8 @@
         "recharts"
       ],
       "registryDependencies": [
-        "chart"
+        "chart",
+        "tooltip"
       ],
       "files": [
         {
@@ -949,7 +963,8 @@
         "recharts"
       ],
       "registryDependencies": [
-        "chart"
+        "chart",
+        "tooltip"
       ],
       "files": [
         {
@@ -1003,7 +1018,9 @@
         "zod",
         "motion"
       ],
-      "registryDependencies": [],
+      "registryDependencies": [
+        "tooltip"
+      ],
       "files": [
         {
           "path": "registry/genui/distribution-chart/distribution-chart.tsx",
@@ -1040,6 +1057,61 @@
       }
     },
     {
+      "name": "usage-chart",
+      "type": "registry:component",
+      "title": "Usage Chart",
+      "description": "One metered quantity per day from a tool result (tokens, energy, data, spend) as a stepped area, with an optional cached or partial share drawn over it. Dragging, touching or arrowing across it moves a cursor, dims the days after it, shows the day's figures and recalculates 1-3 summary figures (total, average, peak, cost) and the date range for the period up to that day, with an accessible per-day table. Category: Visualize.",
+      "categories": [
+        "visualize"
+      ],
+      "dependencies": [
+        "zod",
+        "motion"
+      ],
+      "registryDependencies": [
+        "tooltip"
+      ],
+      "files": [
+        {
+          "path": "registry/genui/usage-chart/usage-chart.tsx",
+          "type": "registry:component",
+          "target": "components/genui/usage-chart.tsx"
+        },
+        {
+          "path": "registry/genui/usage-chart/usage-chart.schema.ts",
+          "type": "registry:lib",
+          "target": "components/genui/usage-chart.schema.ts"
+        },
+        {
+          "path": "registry/genui/usage-chart/usage-chart-utils.ts",
+          "type": "registry:lib",
+          "target": "components/genui/usage-chart-utils.ts"
+        },
+        {
+          "path": "src/components/genui/surface.tsx",
+          "type": "registry:ui",
+          "target": "components/genui/surface.tsx"
+        },
+        {
+          "path": "src/components/genui/locale.ts",
+          "type": "registry:ui",
+          "target": "components/genui/locale.ts"
+        },
+        {
+          "path": "src/components/genui/series-colors.ts",
+          "type": "registry:ui",
+          "target": "components/genui/series-colors.ts"
+        }
+      ],
+      "meta": {
+        "level": "pattern",
+        "functions": [
+          "trend-over-time",
+          "part-to-whole"
+        ]
+      }
+    },
+    {
       "name": "composition-chart",
       "type": "registry:component",
       "title": "Composition Chart",
@@ -1051,7 +1123,9 @@
         "zod",
         "motion"
       ],
-      "registryDependencies": [],
+      "registryDependencies": [
+        "tooltip"
+      ],
       "files": [
         {
           "path": "registry/genui/composition-chart/composition-chart.tsx",
@@ -1104,7 +1178,9 @@
         "zod",
         "motion"
       ],
-      "registryDependencies": [],
+      "registryDependencies": [
+        "tooltip"
+      ],
       "files": [
         {
           "path": "registry/genui/sankey-diagram/sankey-diagram.tsx",
@@ -1153,7 +1229,9 @@
         "lucide-react",
         "motion"
       ],
-      "registryDependencies": [],
+      "registryDependencies": [
+        "tooltip"
+      ],
       "files": [
         {
           "path": "registry/genui/timeline/timeline.tsx",
@@ -1704,7 +1782,9 @@
         "zod",
         "motion"
       ],
-      "registryDependencies": [],
+      "registryDependencies": [
+        "tooltip"
+      ],
       "files": [
         {
           "path": "registry/genui/streaming-skeleton/streaming-skeleton.tsx",
@@ -2209,7 +2289,8 @@
         "lucide-react"
       ],
       "registryDependencies": [
-        "https://animate-ui.com/r/primitives-texts-sliding-number.json"
+        "https://animate-ui.com/r/primitives-texts-sliding-number.json",
+        "tooltip"
       ],
       "files": [
         {
@@ -2890,7 +2971,8 @@
       "registryDependencies": [
         "button",
         "badge",
-        "https://animate-ui.com/r/primitives-texts-shimmering.json"
+        "https://animate-ui.com/r/primitives-texts-shimmering.json",
+        "tooltip"
       ],
       "files": [
         {
@@ -3006,7 +3088,8 @@
       "registryDependencies": [
         "button",
         "https://animate-ui.com/r/primitives-texts-shimmering.json",
-        "https://animate-ui.com/r/primitives-texts-sliding-number.json"
+        "https://animate-ui.com/r/primitives-texts-sliding-number.json",
+        "tooltip"
       ],
       "files": [
         {
@@ -3653,7 +3736,8 @@
         "@types/topojson-specification"
       ],
       "registryDependencies": [
-        "https://animate-ui.com/r/primitives-texts-shimmering.json"
+        "https://animate-ui.com/r/primitives-texts-shimmering.json",
+        "tooltip"
       ],
       "files": [
         {
@@ -3827,6 +3911,53 @@
       ]
     },
     {
+      "name": "cd-player",
+      "type": "registry:component",
+      "title": "CD Player",
+      "description": "A few albums from the user's music app as CDs under a player. The user drops one in by click, drag or keyboard; it flies into the player, spins and plays its preview, and the previous disc goes back to its slot. Each pick returns the album id. Category: Act.",
+      "categories": [
+        "act"
+      ],
+      "dependencies": [
+        "zod",
+        "lucide-react",
+        "motion"
+      ],
+      "registryDependencies": [
+        "tooltip"
+      ],
+      "meta": {
+        "level": "experience"
+      },
+      "files": [
+        {
+          "path": "registry/genui/cd-player/cd-player.tsx",
+          "type": "registry:component",
+          "target": "components/genui/cd-player.tsx"
+        },
+        {
+          "path": "registry/genui/cd-player/cd-player.schema.ts",
+          "type": "registry:lib",
+          "target": "components/genui/cd-player.schema.ts"
+        },
+        {
+          "path": "registry/genui/cd-player/cd-player-utils.ts",
+          "type": "registry:lib",
+          "target": "components/genui/cd-player-utils.ts"
+        },
+        {
+          "path": "src/components/genui/surface.tsx",
+          "type": "registry:ui",
+          "target": "components/genui/surface.tsx"
+        },
+        {
+          "path": "src/components/genui/hint.tsx",
+          "type": "registry:ui",
+          "target": "components/genui/hint.tsx"
+        }
+      ]
+    },
+    {
       "name": "approval-request",
       "type": "registry:component",
       "title": "Approval Request",
@@ -3847,7 +3978,8 @@
         "textarea",
         "https://animate-ui.com/r/components-base-switch.json",
         "https://animate-ui.com/r/primitives-effects-auto-height.json",
-        "https://animate-ui.com/r/primitives-texts-shimmering.json"
+        "https://animate-ui.com/r/primitives-texts-shimmering.json",
+        "tooltip"
       ],
       "meta": {
         "level": "pattern"
@@ -4562,7 +4694,8 @@
         "badge",
         "https://animate-ui.com/r/primitives-effects-auto-height.json",
         "https://animate-ui.com/r/primitives-texts-shimmering.json",
-        "https://animate-ui.com/r/primitives-texts-sliding-number.json"
+        "https://animate-ui.com/r/primitives-texts-sliding-number.json",
+        "tooltip"
       ],
       "meta": {
         "level": "pattern"
@@ -4960,6 +5093,84 @@
       ]
     },
     {
+      "name": "editable-table",
+      "type": "registry:component",
+      "title": "Editable Table",
+      "description": "Records the user corrects in place like a small spreadsheet: typed cells (text, number, select, link, date), keyboard grid, add and delete rows, undo and redo, then save. Returns only what changed. Category: Refine.",
+      "categories": [
+        "refine"
+      ],
+      "dependencies": [
+        "zod",
+        "lucide-react",
+        "motion",
+        "@base-ui/react"
+      ],
+      "registryDependencies": [
+        "badge",
+        "button",
+        "select",
+        "https://animate-ui.com/r/components-base-checkbox.json",
+        "https://animate-ui.com/r/primitives-texts-shimmering.json",
+        "tooltip"
+      ],
+      "files": [
+        {
+          "path": "registry/genui/editable-table/editable-table.tsx",
+          "type": "registry:component",
+          "target": "components/genui/editable-table.tsx"
+        },
+        {
+          "path": "registry/genui/editable-table/editable-table.schema.ts",
+          "type": "registry:lib",
+          "target": "components/genui/editable-table.schema.ts"
+        },
+        {
+          "path": "registry/genui/editable-table/editable-table-utils.ts",
+          "type": "registry:lib",
+          "target": "components/genui/editable-table-utils.ts"
+        },
+        {
+          "path": "src/components/genui/surface.tsx",
+          "type": "registry:ui",
+          "target": "components/genui/surface.tsx"
+        },
+        {
+          "path": "src/components/genui/hint.tsx",
+          "type": "registry:ui",
+          "target": "components/genui/hint.tsx"
+        },
+        {
+          "path": "src/components/genui/scroll-fade.tsx",
+          "type": "registry:ui",
+          "target": "components/genui/scroll-fade.tsx"
+        },
+        {
+          "path": "src/components/genui/date-picker.tsx",
+          "type": "registry:ui",
+          "target": "components/genui/date-picker.tsx"
+        },
+        {
+          "path": "src/components/genui/logo-tile.tsx",
+          "type": "registry:ui",
+          "target": "components/genui/logo-tile.tsx"
+        },
+        {
+          "path": "src/components/genui/series-colors.ts",
+          "type": "registry:ui",
+          "target": "components/genui/series-colors.ts"
+        },
+        {
+          "path": "src/components/genui/locale.ts",
+          "type": "registry:ui",
+          "target": "components/genui/locale.ts"
+        }
+      ],
+      "meta": {
+        "level": "pattern"
+      }
+    },
+    {
       "name": "relationship-explorer",
       "type": "registry:component",
       "title": "Relationship Explorer",
@@ -5168,7 +5379,8 @@
         "button",
         "https://animate-ui.com/r/primitives-texts-shimmering.json",
         "https://animate-ui.com/r/primitives-texts-sliding-number.json",
-        "badge"
+        "badge",
+        "tooltip"
       ],
       "meta": {
         "level": "pattern",
@@ -5220,7 +5432,8 @@
       "registryDependencies": [
         "button",
         "https://animate-ui.com/r/components-base-switch.json",
-        "https://animate-ui.com/r/primitives-texts-shimmering.json"
+        "https://animate-ui.com/r/primitives-texts-shimmering.json",
+        "tooltip"
       ],
       "meta": {
         "level": "experience"
@@ -5270,7 +5483,8 @@
       "registryDependencies": [
         "chart",
         "button",
-        "https://animate-ui.com/r/primitives-texts-shimmering.json"
+        "https://animate-ui.com/r/primitives-texts-shimmering.json",
+        "tooltip"
       ],
       "meta": {
         "level": "pattern",
@@ -5543,7 +5757,8 @@
         "motion"
       ],
       "registryDependencies": [
-        "https://animate-ui.com/r/primitives-texts-shimmering.json"
+        "https://animate-ui.com/r/primitives-texts-shimmering.json",
+        "tooltip"
       ],
       "meta": {
         "level": "pattern",
@@ -5605,7 +5820,8 @@
         "button",
         "badge",
         "https://animate-ui.com/r/primitives-effects-auto-height.json",
-        "https://animate-ui.com/r/primitives-texts-shimmering.json"
+        "https://animate-ui.com/r/primitives-texts-shimmering.json",
+        "tooltip"
       ],
       "meta": {
         "level": "experience",
@@ -6526,7 +6742,8 @@
       ],
       "registryDependencies": [
         "slider",
-        "https://animate-ui.com/r/primitives-texts-sliding-number.json"
+        "https://animate-ui.com/r/primitives-texts-sliding-number.json",
+        "tooltip"
       ],
       "meta": {
         "level": "pattern"
@@ -6671,6 +6888,11 @@
           "path": "registry/genui/mechanism/mechanism-utils.ts",
           "type": "registry:lib",
           "target": "components/genui/mechanism-utils.ts"
+        },
+        {
+          "path": "registry/genui/mechanism/mechanism-svg.ts",
+          "type": "registry:lib",
+          "target": "components/genui/mechanism-svg.ts"
         },
         {
           "path": "src/components/genui/surface.tsx",
@@ -6889,7 +7111,8 @@
         "motion"
       ],
       "registryDependencies": [
-        "button"
+        "button",
+        "tooltip"
       ],
       "files": [
         {

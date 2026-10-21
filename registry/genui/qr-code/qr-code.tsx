@@ -48,7 +48,7 @@ import {
   describeContent,
   displayUrl,
   encodeQr,
-  isDateOnly,
+  formatWhen,
   matrixToPath,
   qrDimension,
   qrFilename,
@@ -124,26 +124,6 @@ function renderPng(modules: QrMatrix): Promise<Blob | null> {
     ctx.fillRect(offset + c * cell, offset + r * cell, n * cell, cell)
   }
   return new Promise((resolve) => canvas.toBlob(resolve, "image/png"))
-}
-
-/** "Thu, Nov 5, 2026, 6:00 – 8:30 PM" in the viewer's time zone. */
-function formatWhen(start: string, end: string | undefined, locale: string) {
-  const allDay = isDateOnly(start)
-  const parse = (s: string) => new Date(allDay ? `${s}T00:00:00Z` : s)
-  const format = new Intl.DateTimeFormat(
-    locale,
-    allDay
-      ? { dateStyle: "full", timeZone: "UTC" }
-      : { dateStyle: "medium", timeStyle: "short" },
-  )
-  const a = parse(start)
-  if (!end) return format.format(a)
-  const b = parse(end)
-  try {
-    return format.formatRange(a, b)
-  } catch {
-    return `${format.format(a)} – ${format.format(b)}`
-  }
 }
 
 /** A short-lived message in the footer's live region. */
