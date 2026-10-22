@@ -256,7 +256,7 @@ function WeekStrip({
               d.isToday ? TODAY_STYLE : DAY_STYLE[d.state],
             )}
           >
-            <span className="text-[11px] leading-none font-medium uppercase opacity-70">
+            <span className="text-[11px] leading-none font-medium opacity-70">
               {weekday.format(new Date(`${d.day}T12:00:00Z`))}
             </span>
             <span className="text-[16px] leading-tight font-medium tabular-nums">
