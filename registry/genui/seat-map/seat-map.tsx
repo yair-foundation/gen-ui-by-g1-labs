@@ -444,7 +444,7 @@ function Frame({
           </svg>
           {/* The screen's light falling on the room. */}
           <span className="-mt-1 h-6 w-full bg-[radial-gradient(ellipse_at_top,var(--color-foreground)_0%,transparent_70%)] opacity-[0.12]" />
-          <span className="-mt-5 text-[13px] font-medium tracking-[0.2em] text-muted-foreground uppercase">
+          <span className="-mt-5 text-[13px] font-medium text-muted-foreground">
             Screen
           </span>
         </div>

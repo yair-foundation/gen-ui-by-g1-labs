@@ -679,7 +679,7 @@ export function LabResults({
                     >
                       <h4
                         id={hid}
-                        className="bg-muted/60 px-3 py-2.5 text-[12px] leading-4 font-medium tracking-[0.08em] text-muted-foreground uppercase dark:bg-white/[0.05]"
+                        className="bg-muted/60 px-3 py-2.5 text-[12px] leading-4 font-medium text-muted-foreground dark:bg-white/[0.05]"
                       >
                         {label}
                       </h4>

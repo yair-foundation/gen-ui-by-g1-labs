@@ -91,7 +91,7 @@ const surfaceInset = "px-3 group-data-[variant=flush]/surface:px-0"
  * - body: content.
  * - meta: the one quiet line (a date, a source). Use sparingly.
  * - label: field labels in dense grids.
- * - eyebrow: the small uppercase tag above a figure or a section ("DOWNLOADS").
+ * - eyebrow: the small tag above a figure or a section ("Downloads"). Sentence case, never all caps.
  */
 const genuiType = {
   // Halaska UI's scale (https://ui.halaska.com, MIT): 10 / 12 / 13 / 14 / 24 / 32.
@@ -101,7 +101,7 @@ const genuiType = {
   body: "text-[13px] leading-[1.6] tracking-[0.01em]",
   meta: "text-[13px] leading-[1.55] tracking-[0.01em] text-muted-foreground",
   label: "text-[13px] font-medium leading-[1.55] tracking-[0.01em] text-muted-foreground",
-  eyebrow: "text-[10px] font-semibold uppercase leading-[1.45] tracking-wide",
+  eyebrow: "text-[10px] font-semibold leading-[1.45]",
   /** The answer figure in a form-like card (a total, a headcount): Halaska's stat. */
   stat: "font-figure lining-nums text-[28px] font-normal leading-[1.2] tracking-tight tabular-nums",
   /** A control's live readout (a slider's value): small grey mono. */
