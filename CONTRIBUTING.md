@@ -11,6 +11,7 @@ Thanks for helping. Gen UI is a curated library: the agent picks from the catalo
 ## Component contract
 
 - Props are partial while streaming. Host props are `status`, `onResult`, `result` (restores a finished state without re-firing) and `className`.
+- A component where the user selects and then confirms may report the selection before the confirm through `onDraft`, shaped like its result, and set `genuiDraft = true` so the Renderer passes it. A draft is context for the user's next message (`describeUIState`), never a decision.
 - Results are a closed set of actions. Fields that must come from a tool are marked `DATA-BOUND` in their `.describe()`.
 - Numbers, money and dates format in the host's locale from `useGenUILocale()`, never the runtime's.
 - Lifecycle states (failed, stale, expired, superseded, empty, partial, cancelled) belong to the Renderer, not to components.

@@ -157,6 +157,12 @@ export type SeatMapResult =
     }
   | { action: "dismiss" }
 
+/**
+ * The selection before the user confirms, sent through `onDraft`: the seats
+ * picked so far, possibly fewer than needed. Not a decision.
+ */
+export type SeatMapDraft = Extract<SeatMapResult, { action: "select" }>
+
 /** Usage guidance the agent reads before choosing this component. */
 export const seatMapGuidance = {
   useWhen: [
@@ -171,7 +177,7 @@ export const seatMapGuidance = {
   rules: [
     "Send rows front to back and seats left to right, with { gap: true } for aisles so columns line up.",
     "Use passengers when you know who's travelling; use count otherwise.",
-    "Pass the user's existing seats as current when they're changing seats.",
+    "Pass the user's existing seats as current when they're changing seats, and only those: never a seat you suggest or one they selected without confirming, which would show as already theirs and lose its price. To suggest a seat, name it in your text.",
     "Set price only for seats that cost extra, with currency. For shows priced by area, send zones and set each seat's zone instead.",
     "For theatres, send each level (Stalls, Dress circle, Upper circle, Boxes) as a section; set stage: 'below' on circles and layout: 'boxes' for boxes.",
     "Mark seats with a restricted view with the 'restricted-view' feature and say why in note.",

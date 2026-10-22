@@ -81,7 +81,11 @@ import {
   seatOf,
   seatSizeFor,
 } from "./seat-map-utils"
-import type { SeatMapInput, SeatMapResult } from "./seat-map.schema"
+import type {
+  SeatMapDraft,
+  SeatMapInput,
+  SeatMapResult,
+} from "./seat-map.schema"
 import { WhyDisabled } from "@/components/genui/hint"
 import { useGenUILocale } from "@/components/genui/locale"
 
@@ -106,6 +110,12 @@ export type SeatMapProps = Partial<
   status?: SeatMapStatus
   /** Called once with the user's decision. Send it back to the agent. */
   onResult?: (result: SeatMapResult) => void
+  /**
+   * Called on every pick before the user confirms, with the seats selected so
+   * far (possibly fewer than needed, or none). Not a decision: keep the
+   * latest and add it to the user's next typed message (`describeUIState`).
+   */
+  onDraft?: (draft: SeatMapDraft) => void
   /**
    * A decision from history (e.g. the tool call's stored output). Shows the
    * chosen seats on a read-only map and never calls onResult.
@@ -596,6 +606,7 @@ export function SeatMap({
   submitLabel,
   status: statusProp,
   onResult,
+  onDraft,
   result,
   className,
 }: SeatMapProps) {
@@ -822,6 +833,31 @@ export function SeatMap({
     )
   }, [mapEl, visibleId, streaming, firstHeld])
 
+  // Seats as the result lists them: passenger order, or map order. Price only
+  // for paid seats the user doesn't already hold.
+  const seatsOf = (
+    nextAssigned: Assignments,
+    nextChosen: string[],
+  ): SeatMapDraft["seats"] => {
+    const withPrice = (seatId: string, passengerId?: string) => {
+      const price = held.has(seatId) ? undefined : index.get(seatId)?.seat.price
+      return {
+        seatId,
+        ...(passengerId ? { passengerId } : {}),
+        ...(price !== undefined ? { price } : {}),
+      }
+    }
+    if (byPassenger) {
+      return passengers.flatMap((p) => {
+        const seatId = seatOf(nextAssigned, p.id)
+        return seatId ? [withPrice(seatId, p.id)] : []
+      })
+    }
+    return [...nextChosen]
+      .sort((a, b) => order(a) - order(b))
+      .map((seatId) => withPrice(seatId))
+  }
+
   const seatDomId = (id: string) => `${baseId}-seat-${index.get(id)?.order}`
 
   const choose = (seat: ReadySeat) => {
@@ -832,10 +868,12 @@ export function SeatMap({
       setAssignments(pick.assignments)
       setActivePassenger(pick.activeId)
       setAnnouncement(announcePassengerPick(pick, passengers))
+      onDraft?.({ action: "select", seats: seatsOf(pick.assignments, chosen) })
     } else {
       const pick = pickForCount(chosen, goal, seat.id)
       setPicked(pick.selected)
       setAnnouncement(announceCountPick(pick, goal))
+      onDraft?.({ action: "select", seats: seatsOf(assigned, pick.selected) })
     }
   }
 
@@ -880,20 +918,8 @@ export function SeatMap({
 
   const submit = () => {
     if (!canSubmit) return
-    // Price only for paid seats the user doesn't already hold.
-    const withPrice = (seatId: string, passengerId?: string) => {
-      const price = held.has(seatId) ? undefined : index.get(seatId)?.seat.price
-      return {
-        seatId,
-        ...(passengerId ? { passengerId } : {}),
-        ...(price !== undefined ? { price } : {}),
-      }
-    }
-    const seats = byPassenger
-      ? passengers.map((p) => withPrice(seatOf(assigned, p.id) as string, p.id))
-      : selectedIds.map((seatId) => withPrice(seatId))
     setDecision("selected")
-    onResult?.({ action: "select", seats })
+    onResult?.({ action: "select", seats: seatsOf(assigned, chosen) })
   }
 
   const dismiss = () => {
@@ -1614,3 +1640,6 @@ export function SeatMap({
     </MotionConfig>
   )
 }
+
+// The Renderer hands this component onDraft.
+SeatMap.genuiDraft = true

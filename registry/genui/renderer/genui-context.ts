@@ -9,7 +9,8 @@
  *   time it changes. One component drives another with no model call.
  * - UI state: what the user changed in the interface since the last message,
  *   as a short note the host adds to the next turn, so the model knows the
- *   current state instead of guessing it.
+ *   current state instead of guessing it. Drafts (a selection the user hasn't
+ *   confirmed yet) go in the same note under their own heading.
  */
 
 /** A pointer into a tool result: the source id, then a dot path. */
@@ -241,6 +242,11 @@ export type GenUIStateEntry = {
   name: string
   /** The latest result the component sent. */
   result: unknown
+  /**
+   * The user's unconfirmed selection, from `onDraft`: what the result would
+   * be if they confirmed now. Never a decision; drop it once a result comes.
+   */
+  draft?: unknown
 }
 
 export type DescribeOptions = {
@@ -253,21 +259,38 @@ export type DescribeOptions = {
 /**
  * A short note of what the user changed in the interface, for the next turn:
  * add it to the user's message (or as a system note) so the model works from
- * the current state. Returns "" when nothing changed.
+ * the current state. Drafts are listed apart, worded so the model reads them
+ * as a starting point and not a decision. Returns "" when nothing changed.
  */
 export function describeUIState(
   entries: readonly GenUIStateEntry[],
   { formatters = {}, maxChars = 1200 }: DescribeOptions = {},
 ): string {
-  const lines: string[] = []
-  for (const e of entries) {
-    if (e.result === undefined) continue
-    const custom = formatters[e.name]?.(e.result)
-    if (custom === null) continue
-    const text = custom ?? JSON.stringify(e.result)
-    lines.push(`- ${e.name} (${e.id}): ${text}`)
+  const line = (e: GenUIStateEntry, value: unknown) => {
+    const custom = formatters[e.name]?.(value)
+    if (custom === null) return null
+    return `- ${e.name} (${e.id}): ${custom ?? JSON.stringify(value)}`
   }
-  if (lines.length === 0) return ""
-  const note = ["Interface state the user set:", ...lines].join("\n")
+  const set: string[] = []
+  const drafts: string[] = []
+  for (const e of entries) {
+    const r = e.result === undefined ? null : line(e, e.result)
+    if (r) set.push(r)
+    const d = e.draft === undefined ? null : line(e, e.draft)
+    if (d) drafts.push(d)
+  }
+  const parts: string[] = []
+  if (set.length) {
+    parts.push(["Interface state the user set:", ...set].join("\n"))
+  }
+  if (drafts.length) {
+    parts.push(
+      [
+        "Selected on screen, not confirmed yet (a starting point for the user's request, not a decision):",
+        ...drafts,
+      ].join("\n"),
+    )
+  }
+  const note = parts.join("\n\n")
   return note.length > maxChars ? `${note.slice(0, maxChars - 1)}…` : note
 }
