@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "architecture",
+  "quality": "showcase",
+  "specification": {
+    "path": "/home/user/gen-ui-by-g1-labs/.archify/architecture-gen-ui-20261022-064057/candidate.json",
+    "sha256": "606fe6f45f193fc5df4f9e0a43b599c9a292e24641c6b2447c50a5e44fb9f253",
+    "bytes": 7192
+  },
+  "artifact": {
+    "path": "/home/user/gen-ui-by-g1-labs/.archify/architecture-gen-ui-20261022-064057/gen-ui-architecture.html",
+    "sha256": "dec4ee8a942f103efb4444f37bb2db74be33c628e39da529749e5bc9cd39524c",
+    "bytes": 840111
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "/home/user/gen-ui-by-g1-labs/.archify/architecture-gen-ui-20261022-064057/gen-ui-architecture.finalize.json",
+    "summaryReceipt": "/home/user/gen-ui-by-g1-labs/.archify/architecture-gen-ui-20261022-064057/gen-ui-architecture.finalize-summary.json",
+    "browserCheckReceipt": "/home/user/gen-ui-by-g1-labs/.archify/architecture-gen-ui-20261022-064057/gen-ui-architecture.browser-check.json"
+  },
+  "update": {
+    "status": "current",
+    "installedVersion": "3.2.0",
+    "availableVersion": "3.2.0",
+    "releaseNotes": null,
+    "checkedAt": "2026-10-22T06:41:00.606Z",
+    "source": "cache",
+    "noticeRequired": false,
+    "noticeText": null
+  },
+  "visualReview": "not-requested",
+  "durationMs": 4796,
+  "browserCheck": {
+    "requested": true,
+    "ran": true
+  }
+}

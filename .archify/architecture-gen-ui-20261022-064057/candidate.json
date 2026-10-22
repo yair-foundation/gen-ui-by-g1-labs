@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Gen UI: from component schema to user action",
+    "output": ".archify/architecture-gen-ui-20261022-064057/gen-ui-architecture.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/yair-foundation/gen-ui-by-g1-labs",
+      "provider": "github",
+      "revision": "728bad01d0257a4acf7157cab1640c4d90ce3cba"
+    }
+  },
+  "components": [
+    { "id": "schemas", "type": "backend", "label": "Schemas", "sublabel": "Zod, guidance, tool", "pos": [40, 190], "size": [120, 60],
+      "sources": [
+        { "path": "registry/genui/checklist/checklist.schema.ts", "line": 79, "end_line": 96, "label": "Guidance" },
+        { "path": "registry/genui/checklist/checklist.schema.ts", "line": 146, "end_line": 155, "label": "Tool definition" }
+      ] },
+    { "id": "prompt", "type": "backend", "label": "Prompt builder", "sublabel": "system + tool set", "pos": [256, 40], "size": [120, 60],
+      "sources": [ { "path": "registry/genui/renderer/genui-prompt.ts", "line": 140, "end_line": 178, "label": "buildGenUIPrompt" } ] },
+    { "id": "agent", "type": "external", "label": "Agent", "sublabel": "LLM + framework", "pos": [256, 190], "size": [120, 60],
+      "sources": [ { "path": "registry/genui/renderer/genui-prompt.ts", "line": 87, "end_line": 95, "label": "Preamble addressed to the model" } ] },
+    { "id": "validate", "type": "backend", "label": "Validation", "sublabel": "Zod + $ref check", "pos": [256, 340], "size": [120, 60],
+      "sources": [ { "path": "registry/genui/renderer/genui-validate.ts", "line": 41, "end_line": 68, "label": "validateGenUIInput" } ] },
+    { "id": "adapters", "type": "backend", "label": "Adapters", "sublabel": "5 frameworks", "pos": [472, 190], "size": [120, 60],
+      "sources": [
+        { "path": "registry/genui/renderer/genui-adapters.ts", "line": 21, "end_line": 38, "label": "fromAISDK" },
+        { "path": "registry/genui/renderer/genui-adapters.ts", "line": 82, "end_line": 89, "label": "toLangGraphToolMessage" },
+        { "path": "registry/genui/renderer/genui-agui.ts", "line": 113, "end_line": 125, "label": "reduceAGUI" }
+      ] },
+    { "id": "renderer", "type": "frontend", "label": "GenUIRenderer", "sublabel": "lifecycle states", "pos": [688, 190], "size": [120, 60],
+      "sources": [
+        { "path": "registry/genui/renderer/genui-renderer.tsx", "line": 83, "end_line": 106, "label": "resolveCallState" },
+        { "path": "registry/genui/renderer/genui-renderer.tsx", "line": 248, "end_line": 263, "label": "Locale + body" },
+        { "path": "registry/genui/renderer/genui-renderer.tsx", "line": 493, "end_line": 580, "label": "RenderNode" }
+      ] },
+    { "id": "components", "type": "frontend", "label": "Components", "sublabel": "one folder each", "pos": [904, 190], "size": [120, 60],
+      "sources": [
+        { "path": "registry/genui/checklist/checklist.tsx", "line": 34, "end_line": 53, "label": "Props, status, onResult" },
+        { "path": "registry/genui/renderer/genui-renderer.tsx", "line": 570, "end_line": 579, "label": "Mounted with props" }
+      ] },
+    { "id": "layouts", "type": "frontend", "label": "Layouts", "sublabel": "6 nested layouts", "pos": [904, 340], "size": [120, 60],
+      "sources": [
+        { "path": "registry/genui/layout-tabs/layout-tabs.tsx", "line": 19, "end_line": 26, "label": "renderChild prop" },
+        { "path": "registry/genui/layout-tabs/layout-tabs.tsx", "line": 98, "label": "genuiLayout flag" },
+        { "path": "registry/genui/renderer/genui-renderer.tsx", "line": 527, "end_line": 534, "label": "Depth limit" }
+      ] },
+    { "id": "primitives", "type": "frontend", "label": "Primitives", "sublabel": "Surface, locale", "pos": [904, 40], "size": [120, 60],
+      "sources": [
+        { "path": "src/components/genui/surface.tsx", "line": 33, "end_line": 50, "label": "Surface" },
+        { "path": "src/components/genui/locale.ts", "line": 27, "end_line": 48, "label": "Locale context" }
+      ] },
+    { "id": "user", "type": "external", "label": "User", "sublabel": "acts on component", "pos": [1120, 190], "size": [120, 60],
+      "sources": [ { "path": "registry/genui/checklist/checklist.tsx", "line": 34, "end_line": 53, "label": "Submit sends a result" } ] }
+  ],
+  "connections": [
+    { "id": "schemas-to-prompt", "from": "schemas", "to": "prompt", "label": "tool + rules", "fromSide": "top", "toSide": "left" },
+    { "id": "schemas-to-validate", "from": "schemas", "to": "validate", "label": "Zod schema", "fromSide": "bottom", "toSide": "left" },
+    { "id": "prompt-to-agent", "from": "prompt", "to": "agent", "label": "system + tools" },
+    { "id": "agent-to-validate", "from": "agent", "to": "validate", "label": "tool input" },
+    { "id": "validate-to-agent", "from": "validate", "to": "agent", "label": "issues" },
+    { "id": "agent-to-adapters", "from": "agent", "to": "adapters", "label": "tool calls", "variant": "emphasis" },
+    { "id": "adapters-to-agent", "from": "adapters", "to": "agent", "label": "tool result" },
+    { "id": "adapters-to-renderer", "from": "adapters", "to": "renderer", "label": "GenUICall", "variant": "emphasis" },
+    { "id": "renderer-to-adapters", "from": "renderer", "to": "adapters", "label": "onResult" },
+    { "id": "renderer-to-components", "from": "renderer", "to": "components", "label": "props", "variant": "emphasis" },
+    { "id": "components-to-renderer", "from": "components", "to": "renderer", "label": "result" },
+    { "id": "renderer-to-layouts", "from": "renderer", "to": "layouts", "label": "renderChild", "fromSide": "bottom", "toSide": "left" },
+    { "id": "layouts-to-components", "from": "layouts", "to": "components", "label": "children" },
+    { "id": "components-to-primitives", "from": "components", "to": "primitives", "label": "built on" },
+    { "id": "renderer-to-primitives", "from": "renderer", "to": "primitives", "label": "locale", "fromSide": "top", "toSide": "left" },
+    { "id": "components-to-user", "from": "components", "to": "user", "label": "renders", "variant": "emphasis" },
+    { "id": "user-to-components", "from": "user", "to": "components", "label": "action" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Contract per component", "items": ["Each component ships a Zod schema, usage guidance and a tool definition", "Fields that must come from a tool are marked DATA-BOUND", "Results are a closed set of actions"] },
+    { "dot": "emerald", "title": "Renderer owns lifecycle", "items": ["Failed, cancelled, empty, partial, stale, expired and superseded states live in the Renderer", "Layouts may nest one more layout, no deeper"] },
+    { "dot": "violet", "title": "Beyond the main path", "items": ["Refs and binds let values flow from tool results and sibling results without retyping", "Markdown fallback, OpenUI and json-render exports sit beside the adapters", "The host wires onResult to the adapter's tool-message helper"] },
+    { "dot": "amber", "title": "Distribution", "items": ["registry.json lists the items; pnpm registry:build writes public/r", "Installed with the shadcn CLI, so the host owns the code"] }
+  ]
+}

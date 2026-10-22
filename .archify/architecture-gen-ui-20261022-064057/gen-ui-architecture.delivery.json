@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "bc498e99-ac53-4138-9a74-ec65ae327c68",
+  "status": "current",
+  "command": "deliver",
+  "type": "architecture",
+  "input": "/home/user/gen-ui-by-g1-labs/.archify/architecture-gen-ui-20261022-064057/candidate.json",
+  "output": "/home/user/gen-ui-by-g1-labs/.archify/architecture-gen-ui-20261022-064057/gen-ui-architecture.html",
+  "specification": {
+    "sha256": "606fe6f45f193fc5df4f9e0a43b599c9a292e24641c6b2447c50a5e44fb9f253",
+    "bytes": 7192
+  },
+  "artifact": {
+    "sha256": "dec4ee8a942f103efb4444f37bb2db74be33c628e39da529749e5bc9cd39524c",
+    "bytes": 840111
+  }
+}
