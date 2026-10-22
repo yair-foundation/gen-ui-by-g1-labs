@@ -229,6 +229,16 @@ export type CarRentalResult =
   /** Confirmation mode. cancel-rental is only sent after a second, explicit click. */
   | { action: "manage" | "cancel-rental" | "add-to-calendar" }
 
+/**
+ * The selection before the user confirms, sent through `onDraft`: the
+ * reserve result for the picked offer, cover and extras, or change-trip while
+ * the trip editor holds a valid change. Not a decision.
+ */
+export type CarRentalDraft = Extract<
+  CarRentalResult,
+  { action: "reserve" | "change-trip" }
+>
+
 /** Usage guidance the agent reads before choosing this component. */
 export const carRentalGuidance = {
   useWhen: [

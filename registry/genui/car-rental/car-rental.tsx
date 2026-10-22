@@ -92,6 +92,7 @@ import {
   type YoungDriverFee,
 } from "./car-rental-utils"
 import type {
+  CarRentalDraft,
   CarRentalExtra,
   CarRentalFilterPreset,
   CarRentalInput,
@@ -181,6 +182,13 @@ export type CarRentalProps = Partial<
    * action; cancel-rental only after the user confirms it.
    */
   onResult?: (result: CarRentalResult) => void
+  /**
+   * Called when the user's selection changes before they confirm, with the
+   * result Reserve (or the trip editor's Update) would send now. Not a
+   * decision: keep the latest and add it to the user's next typed message
+   * (`describeUIState`).
+   */
+  onDraft?: (draft: CarRentalDraft) => void
   /**
    * Results from history (the tool call's stored output, or several). Renders
    * the finished state and never calls onResult.
@@ -727,6 +735,26 @@ function policyLine(
     .join(" · ")
 }
 
+/**
+ * Sends the selection to the host each time it changes (D70). A component of
+ * its own so the effect can live below the confirmation-mode return.
+ */
+function ReportDraft({
+  draft,
+  onDraft,
+}: {
+  draft: CarRentalDraft | null
+  onDraft: (draft: CarRentalDraft) => void
+}) {
+  const key = draft ? JSON.stringify(draft) : null
+  const onDraftRef = React.useRef(onDraft)
+  onDraftRef.current = onDraft
+  React.useEffect(() => {
+    if (key) onDraftRef.current(JSON.parse(key))
+  }, [key])
+  return null
+}
+
 export function CarRental({
   mode,
   pickup,
@@ -741,6 +769,7 @@ export function CarRental({
   now: nowProp,
   status: statusProp,
   onResult,
+  onDraft,
   result,
   className,
 }: CarRentalProps) {
@@ -1474,20 +1503,27 @@ export function CarRental({
     setTouched(true)
   }
 
+  const reserveResult = (): CarRentalDraft | null =>
+    canReserve && offer && cover && totals && currency
+      ? {
+          action: "reserve",
+          offerId: offer.id,
+          insuranceId: cover.id,
+          extras: totals.extras.map((e) => ({
+            id: e.id,
+            quantity: e.quantity,
+          })),
+          total: {
+            amount: totals.total,
+            payNow: totals.payNow,
+            payAtDesk: totals.payAtDesk,
+            currency,
+          },
+        }
+      : null
   const reserve = () => {
-    if (!canReserve || !offer || !cover || !totals || !currency) return
-    const r: SelectDecision = {
-      action: "reserve",
-      offerId: offer.id,
-      insuranceId: cover.id,
-      extras: totals.extras.map((e) => ({ id: e.id, quantity: e.quantity })),
-      total: {
-        amount: totals.total,
-        payNow: totals.payNow,
-        payAtDesk: totals.payAtDesk,
-        currency,
-      },
-    }
+    const r = reserveResult()
+    if (!r) return
     setDecision(r)
     onResult?.(r)
   }
@@ -1531,36 +1567,42 @@ export function CarRental({
   const updateDraft = (patch: Partial<TripDraft>) =>
     setTripDraft((d) => (d ? { ...d, ...patch } : d))
 
+  const tripChange = (): CarRentalDraft | null =>
+    busy ||
+    locked ||
+    !tripDraft ||
+    draftIssue ||
+    !draftChanged ||
+    draftFrom === null ||
+    draftTo === null
+      ? null
+      : {
+          action: "change-trip",
+          pickup: {
+            location: tripDraft.pickupLocation.trim(),
+            at: toOffsetISO(draftFrom, pickupZone),
+            timeZone: pickup?.timeZone ?? pickupZone,
+          },
+          dropoff: {
+            location: draftReturn.trim(),
+            at: toOffsetISO(draftTo, dropoffZone),
+            timeZone: dropoff?.timeZone ?? dropoffZone,
+          },
+          ...(draftAge !== null ? { driverAge: draftAge } : {}),
+        }
   const changeTrip = () => {
-    if (
-      busy ||
-      locked ||
-      !tripDraft ||
-      draftIssue ||
-      !draftChanged ||
-      draftFrom === null ||
-      draftTo === null
-    ) {
-      return
-    }
-    const r: SelectDecision = {
-      action: "change-trip",
-      pickup: {
-        location: tripDraft.pickupLocation.trim(),
-        at: toOffsetISO(draftFrom, pickupZone),
-        timeZone: pickup?.timeZone ?? pickupZone,
-      },
-      dropoff: {
-        location: draftReturn.trim(),
-        at: toOffsetISO(draftTo, dropoffZone),
-        timeZone: dropoff?.timeZone ?? dropoffZone,
-      },
-      ...(draftAge !== null ? { driverAge: draftAge } : {}),
-    }
+    const r = tripChange()
+    if (!r) return
     setTripDraft(null)
     setDecision(r)
     onResult?.(r)
   }
+
+  // What the user would send if they confirmed now (D70): a valid trip
+  // change while the editor holds one, else the reserve for the picked offer
+  // once they've touched something.
+  const draftResult =
+    tripChange() ?? (touched && !busy && !locked ? reserveResult() : null)
 
   const changeSummary = (
     r: Extract<SelectDecision, { action: "change-trip" }>,
@@ -1940,6 +1982,7 @@ export function CarRental({
         aria-label="Rent a car"
         className={className}
       >
+        {onDraft && <ReportDraft draft={draftResult} onDraft={onDraft} />}
         {renderHeader(
           canChangeTrip && (
             <Button
@@ -2449,3 +2492,6 @@ function OfferOptions({
     </div>
   )
 }
+
+// The Renderer hands this component onDraft.
+CarRental.genuiDraft = true
