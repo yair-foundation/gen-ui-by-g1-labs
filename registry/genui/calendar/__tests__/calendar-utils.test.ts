@@ -16,10 +16,10 @@ import {
 const TZ = "America/New_York"
 
 describe("formatHour", () => {
-  it("shortens AM / PM to one letter", () => {
-    assert.equal(formatHour(9, "en-US"), "9A")
-    assert.equal(formatHour(12, "en-US"), "12P")
-    assert.equal(formatHour(16, "en-US"), "4P")
+  it("shortens AM / PM to one lowercase letter", () => {
+    assert.equal(formatHour(9, "en-US"), "9a")
+    assert.equal(formatHour(12, "en-US"), "12p")
+    assert.equal(formatHour(16, "en-US"), "4p")
   })
 
   it("keeps 24-hour locales as they are", () => {
@@ -147,11 +147,11 @@ describe("formatTimeShort", () => {
   it("drops :00 and shortens the day period", () => {
     assert.equal(
       formatTimeShort(t("2026-10-15T10:00:00-04:00"), TZ, "en-US"),
-      "10A",
+      "10a",
     )
     assert.equal(
       formatTimeShort(t("2026-10-15T13:30:00-04:00"), TZ, "en-US"),
-      "1:30P",
+      "1:30p",
     )
   })
 

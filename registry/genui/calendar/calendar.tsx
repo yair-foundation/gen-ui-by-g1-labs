@@ -4,9 +4,13 @@ import * as React from "react"
 import {
   AlertTriangleIcon,
   CheckIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  ExternalLinkIcon,
   MessageSquareIcon,
   XIcon,
 } from "lucide-react"
+import { Popover } from "@base-ui/react/popover"
 import { MotionConfig, motion } from "motion/react"
 
 import { cn } from "@/lib/utils"
@@ -27,21 +31,27 @@ import {
 import { useGenUILocale } from "@/components/genui/locale"
 import { IconTip, WhyDisabled } from "@/components/genui/hint"
 import { ScrollFade } from "@/components/genui/scroll-fade"
+import { Segmented } from "@/components/genui/segmented"
 
 import type {
   CalendarEvent,
   CalendarInput,
   CalendarProposal,
   CalendarResult,
+  CalendarSource,
   CalendarTodo,
   CalendarView,
 } from "./calendar.schema"
 import {
   type Interval,
+  addDays,
+  addMonths,
+  anyInDays,
   applyProposals,
   compareIntervals,
   dayKeyOf,
   dayRange,
+  daysInMonth,
   diffDays,
   eventInterval,
   findConflicts,
@@ -61,6 +71,7 @@ import {
   safeTimeZone,
   segmentOnDay,
   startOfMonth,
+  startOfWeek,
 } from "./calendar-utils"
 
 export type CalendarStatus =
@@ -85,11 +96,15 @@ type ReadyProposal = CalendarProposal & {
 }
 
 export type CalendarProps = Partial<
-  Omit<CalendarInput, "range" | "events" | "proposals" | "todos" | "workingHours">
+  Omit<
+    CalendarInput,
+    "range" | "events" | "proposals" | "calendars" | "todos" | "workingHours"
+  >
 > & {
   range?: Partial<CalendarInput["range"]>
   /** Events, to-dos and proposals may be partial while the tool call streams. */
   events?: Partial<CalendarEvent>[]
+  calendars?: Partial<CalendarSource>[]
   todos?: Partial<CalendarTodo>[]
   proposals?: Partial<CalendarProposal>[]
   workingHours?: Partial<NonNullable<CalendarInput["workingHours"]>>
@@ -127,12 +142,84 @@ type Item = {
   title: string
   iv: Interval
   state: ItemState
+  calendar?: { label: string; index: number }
+  location?: string
+  attendees?: number
+  url?: string
   busy: boolean
+  reason?: string
+  /** On the original of a proposed move: where it goes. */
+  movedTo?: number
+  /** On a proposed or applied move: where it was. */
+  movedFrom?: number
   /** Titles of busy events a proposal overlaps. */
   conflicts: string[]
 }
 
-const VIEWS: CalendarView[] = ["week", "day", "month", "today"]
+const VIEW_LABELS: Record<CalendarView, string> = {
+  week: "Week",
+  day: "Day",
+  month: "Month",
+  today: "Today",
+}
+const VIEW_ORDER: CalendarView[] = ["week", "day", "month"]
+const MONTH_SHOWS = 3
+
+/**
+ * Calendar colours (D26, restored by D72): solid fills with their own text
+ * colour, after Google Calendar's dark theme: slate blue, teal, gold, green,
+ * and grey for later calendars and events with no calendar. Dark mode takes
+ * the original values; light mode uses deeper fills with white text, and its
+ * teal, gold and green are deepened a little further so every text colour is
+ * at least 4.5:1 on its fill in both themes. Put on the root: `--cal-bg-n` is
+ * the fill, `--cal-fg-n` the text on it.
+ */
+const CAL_VARS = [
+  "[--cal-bg-0:#5560a8] [--cal-fg-0:#ffffff]",
+  "[--cal-bg-1:#2f7d6d] [--cal-fg-1:#ffffff]",
+  "[--cal-bg-2:#8a6600] [--cal-fg-2:#ffffff]",
+  "[--cal-bg-3:#2f7a4f] [--cal-fg-3:#ffffff]",
+  "[--cal-bg-4:#6c6f74] [--cal-fg-4:#ffffff]",
+  "dark:[--cal-bg-0:#4a5588] dark:[--cal-fg-0:#e6e9f8]",
+  "dark:[--cal-bg-1:#5a9a8e] dark:[--cal-fg-1:#0a1f1b]",
+  "dark:[--cal-bg-2:#e9c45b] dark:[--cal-fg-2:#2a2100]",
+  "dark:[--cal-bg-3:#6db38a] dark:[--cal-fg-3:#0d2416]",
+  "dark:[--cal-bg-4:#505256] dark:[--cal-fg-4:#ececec]",
+].join(" ")
+
+const CAL_COLORS = 4
+const calSlot = (index: number | undefined) =>
+  index !== undefined && index < CAL_COLORS ? index : CAL_COLORS
+
+/** Shapes back the colour up, so a calendar is never told apart by colour alone (D26). */
+const MARKERS = [
+  "rounded-full bg-current",
+  "rounded-full border-2 border-current",
+  "rounded-[2px] bg-current",
+  "rounded-[2px] border-2 border-current",
+  "rotate-45 rounded-[1px] bg-current",
+  "rotate-45 rounded-[1px] border-2 border-current",
+]
+
+/** `onFill`: the marker sits on its calendar's own fill, so it takes the text colour; elsewhere it is the fill colour. */
+function Marker({ index, onFill = false }: { index: number; onFill?: boolean }) {
+  return (
+    <span
+      aria-hidden
+      style={onFill ? undefined : { color: `var(--cal-bg-${calSlot(index)})` }}
+      className={cn("inline-block size-2 shrink-0", MARKERS[index % MARKERS.length])}
+    />
+  )
+}
+
+/** Sets the event's fill and text colour from its calendar (grey when it has none). */
+const calStyle = (item: Item): React.CSSProperties => {
+  const slot = calSlot(item.calendar?.index)
+  return {
+    "--cal-bg": `var(--cal-bg-${slot})`,
+    "--cal-fg": `var(--cal-fg-${slot})`,
+  } as React.CSSProperties
+}
 
 /** What a block's state means, said in words: the sr text never relies on the look. */
 const STATE_TEXT: Partial<Record<ItemState, string>> = {
@@ -144,14 +231,18 @@ const STATE_TEXT: Partial<Record<ItemState, string>> = {
 }
 
 /**
- * The schedule's look (D71): every event a soft neutral block; a change (a
- * proposal, or one just applied) the solid foreground block; the slot a move
- * leaves and an event being cancelled a dashed outline; a free event hollow.
+ * The schedule's look (D71, D72): an event is a solid block in its calendar's
+ * colour; a change (a proposal, or one just applied) is the solid foreground
+ * block; the slot a move leaves and an event being cancelled are dashed
+ * outlines; a free timed event is hollow, with its calendar's marker.
  */
-const BUSY_FILL = "bg-foreground/[0.09] dark:bg-foreground/[0.2]"
-const CHANGED_FILL = "bg-foreground text-background"
-const DASHED = "border border-dashed border-foreground/45"
-const FREE = "border border-border text-muted-foreground"
+const CAL_FILL =
+  "border border-transparent bg-[var(--cal-bg)] text-[color:var(--cal-fg)] hover:brightness-110"
+const CHANGED_FILL =
+  "border border-transparent bg-foreground text-background hover:opacity-90"
+const DASHED =
+  "border border-dashed border-foreground/45 text-muted-foreground hover:bg-foreground/5"
+const FREE = "border border-border hover:bg-foreground/5"
 
 const isChanged = (item: Item) =>
   item.state === "proposed" || item.state === "added" || item.state === "moved"
@@ -160,16 +251,17 @@ const isStruck = (item: Item) =>
 
 function itemTone(item: Item) {
   if (isChanged(item)) return CHANGED_FILL
-  if (isStruck(item)) return cn(DASHED, "text-muted-foreground")
-  return item.busy ? BUSY_FILL : FREE
+  if (isStruck(item)) return DASHED
+  // All-day events are free by default, but they are still shown filled.
+  return item.busy || item.iv.allDay ? CAL_FILL : FREE
 }
 
 /**
- * Times and days on the schedule: 'MON 12', '9A', '9:30 AM', '15 MIN'.
- * The `schedule-label` role in the design foundations.
+ * Days, hours, times and durations on the schedule: 'Mon 12', '9a', '9:30 AM',
+ * '15 min'. The `schedule-label` role in the design foundations. Never all caps.
  */
 const SCHEDULE_LABEL =
-  "font-mono text-[13px] uppercase leading-none tracking-[0.06em] tabular-nums"
+  "font-mono text-[13px] leading-none tracking-[0.02em] tabular-nums"
 
 const isReadyEvent = (e: Partial<CalendarEvent>): e is ReadyEvent =>
   typeof e.id === "string" &&
@@ -188,6 +280,16 @@ const isReadyProposal = (p: Partial<CalendarProposal>): p is ReadyProposal =>
 
 const isReadyTodo = (t: Partial<CalendarTodo>): t is CalendarTodo =>
   typeof t.id === "string" && typeof t.title === "string"
+
+function safeHref(url: string | undefined): string | null {
+  if (!url) return null
+  try {
+    const u = new URL(url)
+    return u.protocol === "http:" || u.protocol === "https:" ? u.href : null
+  } catch {
+    return null
+  }
+}
 
 function parseHHmm(value: string | undefined): number | null {
   const m = value ? /^(\d{1,2}):(\d{2})$/.exec(value) : null
@@ -216,6 +318,7 @@ export function Calendar({
   view: viewProp,
   range,
   events = [],
+  calendars = [],
   todos = [],
   proposals = [],
   workingHours,
@@ -229,6 +332,8 @@ export function Calendar({
   const tz = safeTimeZone(timezone)
   const baseId = React.useId()
   const titleId = `${baseId}-title`
+  const detailsId = `${baseId}-details`
+  const rootRef = React.useRef<HTMLElement>(null)
 
   /* Decision state, restored from `result`. */
   const [declined, setDeclined] = React.useState<Set<string>>(
@@ -256,6 +361,13 @@ export function Calendar({
   const streaming = status === "streaming"
   const locked = status !== "ready"
 
+  /* Local view state: what the user looks at. Never fetches. */
+  const [userView, setUserView] = React.useState<CalendarView | null>(null)
+  const [userAnchor, setUserAnchor] = React.useState<string | null>(null)
+  const [selected, setSelected] = React.useState<string | null>(null)
+  const [announcement, setAnnouncement] = React.useState("")
+  const firstDay = React.useMemo(() => firstDayOfWeek(locale), [locale])
+
   // The viewer's clock, for today and what's on now.
   const [clock, setClock] = React.useState<number | null>(null)
   React.useEffect(() => {
@@ -277,20 +389,57 @@ export function Calendar({
     .filter((p) => isAccepted(p.id))
     .map((p) => p.id)
 
+  const calendarIndex = React.useMemo(() => {
+    const list: { id?: string; label: string }[] = calendars
+      .filter((c): c is CalendarSource => !!c.id && !!c.label)
+      .map((c) => ({ id: c.id, label: c.label }))
+    for (const e of events) {
+      if (
+        e.calendar &&
+        !list.some((c) => c.id === e.calendar || c.label === e.calendar)
+      ) {
+        list.push({ label: e.calendar })
+      }
+    }
+    return list
+  }, [calendars, events])
+
+  const resolveCalendar = (name: string | undefined) => {
+    if (!name) return undefined
+    const index = calendarIndex.findIndex(
+      (c) => c.id === name || c.label === name,
+    )
+    return index === -1
+      ? undefined
+      : { label: calendarIndex[index].label, index }
+  }
+
   const items: Item[] = (() => {
     const out: Item[] = []
+    const base = (e: ReadyEvent) => ({
+      title: e.title,
+      calendar: resolveCalendar(e.calendar),
+      location: e.location,
+      attendees: e.attendees,
+      url: e.url,
+      busy: isBusy(e),
+      conflicts: [] as string[],
+    })
+
     if (status === "applied") {
       // Decided: the resulting schedule, with what changed marked.
       for (const e of applyProposals(readyEvents, readyProposals, acceptedIds)) {
         const iv = eventInterval(e, tz)
         if (!iv) continue
         out.push({
+          ...base(e),
           key: e.change === "added" ? `p:${e.id}` : `e:${e.id}`,
-          title: e.title,
           iv,
           state: e.change ?? "event",
-          busy: isBusy(e),
-          conflicts: [],
+          movedFrom: e.previous
+            ? (parseInstant(e.previous.start, tz) ?? undefined)
+            : undefined,
+          reason: readyProposals.find((p) => p.id === e.proposalId)?.reason,
         })
       }
       return out.sort((a, b) => compareIntervals(a.iv, b.iv))
@@ -313,12 +462,15 @@ export function Calendar({
       if (!iv) continue
       const p = byEvent.get(e.id)
       out.push({
+        ...base(e),
         key: `e:${e.id}`,
-        title: e.title,
         iv,
         state: p ? (p.kind === "move" ? "moving" : "cancelling") : "event",
-        busy: isBusy(e),
-        conflicts: [],
+        movedTo:
+          p?.kind === "move"
+            ? (parseInstant(p.start, tz) ?? undefined)
+            : undefined,
+        reason: p?.kind === "cancel" ? p.reason : undefined,
       })
     }
     for (const p of active) {
@@ -330,53 +482,169 @@ export function Calendar({
           ? readyEvents.find((e) => e.id === p.eventId)
           : undefined
       out.push({
-        key: `p:${p.id}`,
+        ...(original
+          ? base(original)
+          : { title: p.title, busy: true, conflicts: [] }),
         title: original?.title ?? p.title,
+        key: `p:${p.id}`,
         iv,
         state: "proposed",
-        busy: true,
+        movedFrom: original
+          ? (parseInstant(original.start, tz) ?? undefined)
+          : undefined,
+        reason: p.reason,
         conflicts: (conflicts.get(p.id) ?? []).map((c) => c.title),
       })
     }
     return out.sort((a, b) => compareIntervals(a.iv, b.iv))
   })()
+  const intervals = items.map((i) => i.iv)
 
-  /* The period shown. */
-  const view: CalendarView = VIEWS.includes(viewProp as CalendarView)
-    ? (viewProp as CalendarView)
-    : "week"
+  /* Range, views and the visible period. */
   const rangeStart =
     normalizeDayKey(range?.start) ??
     // Without a range, wait while streaming; then fall back to the events.
     (streaming ? null : items[0]?.iv.startKey || todayKey || null)
-  const gridDays =
-    view === "day" || view === "today"
-      ? 1
-      : Math.min(7, Math.max(1, Math.round(range?.days ?? 7)))
-  const days = rangeStart ? dayRange(rangeStart, gridDays) : []
-  const monthStart = rangeStart ? startOfMonth(rangeStart) : null
-  const periodLabel = !rangeStart
-    ? null
-    : view === "month"
-      ? formatDay(rangeStart, "month", locale)
-      : formatRangeLabel(rangeStart, gridDays, locale)
+  const initialView: CalendarView = VIEW_ORDER.concat("today").includes(
+    viewProp as CalendarView,
+  )
+    ? (viewProp as CalendarView)
+    : "week"
+  const spanDays = rangeStart
+    ? (range?.days ??
+      (initialView === "day" || initialView === "today"
+        ? 1
+        : initialView === "month"
+          ? daysInMonth(rangeStart) - Number(rangeStart.slice(8, 10)) + 1
+          : 7))
+    : 7
+
+  // The switch only offers views the events can fill. Today has none.
+  const options =
+    initialView === "today"
+      ? []
+      : VIEW_ORDER.filter(
+          (v) =>
+            v === initialView ||
+            v === "day" ||
+            (v === "week" && spanDays > 1) ||
+            (v === "month" && spanDays >= 14),
+        )
+  const view: CalendarView = userView ?? initialView
+
+  const anchorFor = (v: CalendarView, focus: string): string => {
+    if (!rangeStart) return focus
+    if (v === "month") return startOfMonth(focus)
+    if (v === "week") {
+      if (spanDays > 7) return startOfWeek(focus, firstDay)
+      return addDays(
+        rangeStart,
+        Math.floor(diffDays(rangeStart, focus) / 7) * 7,
+      )
+    }
+    return focus
+  }
+  const defaultAnchor = (v: CalendarView) =>
+    rangeStart
+      ? v === "month"
+        ? startOfMonth(rangeStart)
+        : v === "week" && spanDays > 7
+          ? startOfWeek(rangeStart, firstDay)
+          : rangeStart
+      : null
+  const anchor = userAnchor ?? defaultAnchor(view)
+
+  /** The days a period covers (for months: the month itself, not the grid). */
+  const periodDays = (v: CalendarView, a: string): [string, number] =>
+    v === "day" || v === "today"
+      ? [a, 1]
+      : v === "week"
+        ? [a, Math.min(7, spanDays)]
+        : [a, daysInMonth(a)]
+  const step = (v: CalendarView, a: string, dir: 1 | -1) =>
+    v === "month"
+      ? addMonths(a, dir)
+      : addDays(a, v === "day" ? dir : 7 * dir)
+  const hasItems = (v: CalendarView, a: string) =>
+    anyInDays(intervals, ...periodDays(v, a))
+  const periodLabel = (v: CalendarView, a: string) =>
+    v === "month"
+      ? formatDay(a, "month", locale)
+      : formatRangeLabel(...periodDays(v, a), locale)
+
+  const navigable = view !== "today"
+  const prevAnchor = anchor && navigable ? step(view, anchor, -1) : null
+  const nextAnchor = anchor && navigable ? step(view, anchor, 1) : null
+  const todayAnchor = todayKey && navigable ? anchorFor(view, todayKey) : null
+  const canPrev = !!prevAnchor && hasItems(view, prevAnchor)
+  const canNext = !!nextAnchor && hasItems(view, nextAnchor)
+  const canToday =
+    !!todayAnchor && todayAnchor !== anchor && hasItems(view, todayAnchor)
+  const unit = view === "day" ? "day" : view === "week" ? "week" : "month"
+  const showNav = navigable && (canPrev || canNext || canToday)
+
+  const rangeLabel = anchor ? periodLabel(view, anchor) : null
+  const visibleDays: string[] =
+    !anchor || view === "month" || view === "today"
+      ? []
+      : dayRange(...periodDays(view, anchor))
+
+  const announce = (v: CalendarView, a: string | null) => {
+    if (!a) return
+    setAnnouncement(`${VIEW_LABELS[v]} view, ${periodLabel(v, a)}`)
+  }
+  const goTo = (a: string | null) => {
+    if (!a) return
+    setUserAnchor(a)
+    setSelected(null)
+    announce(view, a)
+  }
+  const switchView = (v: CalendarView, focusDay?: string) => {
+    const sel = items.find((i) => i.key === selected)
+    const focus =
+      focusDay ||
+      sel?.iv.startKey ||
+      (todayKey && visibleDays.includes(todayKey) ? todayKey : null) ||
+      (anchor && view === "month" && rangeStart?.startsWith(anchor.slice(0, 7))
+        ? rangeStart
+        : anchor) ||
+      rangeStart
+    const a = focus ? anchorFor(v, focus) : null
+    setUserView(v)
+    setUserAnchor(a)
+    setSelected(null)
+    announce(v, a)
+  }
 
   /* Labels. */
   const timeText = (t: number) => formatTime(t, tz, locale)
+  const whenText = (iv: Interval, long = false) => {
+    if (iv.allDay) {
+      const last = addDays(iv.endKey, -1)
+      const style = long ? "long" : "date"
+      return last === iv.startKey
+        ? `${formatDay(iv.startKey, style, locale)}, all day`
+        : `${formatDay(iv.startKey, style, locale)} to ${formatDay(last, style, locale)}, all day`
+    }
+    const day = (t: number) =>
+      long
+        ? formatDay(dayKeyOf(t, tz), "long", locale)
+        : formatWeekdayAt(t, tz, "long", locale)
+    if (iv.end <= iv.start) return `${day(iv.start)} ${timeText(iv.start)}`
+    const sameDay = dayKeyOf(iv.start, tz) === dayKeyOf(iv.end - 1, tz)
+    return sameDay
+      ? `${day(iv.start)} ${timeText(iv.start)} to ${timeText(iv.end)}`
+      : `${day(iv.start)} ${timeText(iv.start)} to ${day(iv.end)} ${timeText(iv.end)}`
+  }
   const shortAt = (t: number) =>
     `${formatWeekdayAt(t, tz, "short", locale)} ${timeText(t)}`
   const itemLabel = (item: Item) => {
-    const { iv } = item
-    const when = iv.allDay
-      ? "all day"
-      : iv.end <= iv.start
-        ? timeText(iv.start)
-        : dayKeyOf(iv.start, tz) === dayKeyOf(iv.end - 1, tz)
-          ? `${timeText(iv.start)} to ${timeText(iv.end)}`
-          : `${shortAt(iv.start)} to ${shortAt(iv.end)}`
-    const parts = [item.title, when]
+    const parts = [item.title, whenText(item.iv)]
+    if (item.calendar) parts.push(`${item.calendar.label} calendar`)
     if (STATE_TEXT[item.state]) parts.push(STATE_TEXT[item.state] as string)
-    if (!item.busy && item.state === "event" && !iv.allDay) parts.push("free")
+    if (!item.busy && item.state === "event" && !item.iv.allDay) {
+      parts.push("free")
+    }
     if (item.conflicts.length) {
       parts.push(`conflicts with ${joinTitles(item.conflicts)}`)
     }
@@ -404,10 +672,53 @@ export function Calendar({
     return { verb: p.kind === "create" ? "Add" : "Cancel", name, when: span }
   }
 
+  /* Selection and details. */
+  const activeItem = items.find((i) => i.key === selected) ?? null
+  // The card keeps its last event while it animates out.
+  const lastActive = React.useRef<Item | null>(null)
+  if (activeItem) lastActive.current = activeItem
+  const cardItem = activeItem ?? lastActive.current
+  // Switching from one event to another slides the card; the first open does not.
+  const [glide, setGlide] = React.useState(false)
+  const prevActive = React.useRef<string | null>(null)
+  React.useLayoutEffect(() => {
+    if (selected === null) setGlide(false)
+    else if (prevActive.current !== null && prevActive.current !== selected)
+      setGlide(true)
+    prevActive.current = selected
+  }, [selected])
+  const focusItem = (key: string) => {
+    const el = rootRef.current?.querySelector<HTMLElement>(
+      `[data-cal-key="${CSS.escape(key)}"]`,
+    )
+    el?.focus()
+  }
+  const closeDetails = () => {
+    const key = selected
+    setSelected(null)
+    if (key) requestAnimationFrame(() => focusItem(key))
+  }
+  const toggleItem = (key: string) =>
+    setSelected((prev) => (prev === key ? null : key))
+
+  const itemButtonProps = (item: Item) => ({
+    type: "button" as const,
+    "data-cal-key": item.key,
+    "aria-label": itemLabel(item),
+    "aria-expanded": selected === item.key,
+    "aria-controls": selected === item.key ? detailsId : undefined,
+    "aria-haspopup": "dialog" as const,
+    onClick: () => toggleItem(item.key),
+    onKeyDown: (e: React.KeyboardEvent<HTMLElement>) => {
+      if (e.key === "Escape" && selected === item.key) setSelected(null)
+    },
+  })
+
   /* Results. */
   const apply = () => {
     if (locked) return
     setDecision("applied")
+    setSelected(null)
     onResult?.({
       action: "apply",
       accepted: acceptedIds,
@@ -429,9 +740,62 @@ export function Calendar({
     onResult?.({ action: "dismiss" })
   }
 
+  // The card follows the event that was clicked last: a new element re-anchors it.
+  const cardAnchor = cardItem
+    ? (rootRef.current?.querySelector<HTMLElement>(
+        `[data-cal-key="${CSS.escape(cardItem.key)}"]`,
+      ) ?? null)
+    : null
+  const detailsCard = (
+    <Popover.Root
+      open={activeItem !== null}
+      onOpenChange={(open, eventDetails) => {
+        if (open) return
+        // A press on an event button is handled by the button (it toggles).
+        const target = eventDetails.event?.target
+        if (target instanceof Element && target.closest("[data-cal-key]")) return
+        setSelected(null)
+      }}
+    >
+      <Popover.Portal>
+        <Popover.Positioner
+          anchor={cardAnchor}
+          side="top"
+          align="center"
+          sideOffset={12}
+          collisionPadding={8}
+          className={cn(
+            "isolate z-50 outline-none",
+            glide &&
+              "transition-transform duration-200 ease-out motion-reduce:transition-none",
+          )}
+        >
+          <Popover.Popup
+            id={detailsId}
+            aria-label={cardItem ? `Details: ${cardItem.title}` : undefined}
+            // Opened by a click, so focus moves into it; Esc returns to the event.
+            className="w-72 max-w-[calc(100vw-1rem)] origin-(--transform-origin) rounded-[10px] bg-popover p-3 text-popover-foreground shadow-md ring-1 ring-foreground/10 outline-none transition-[opacity,transform] duration-150 ease-out data-[ending-style]:translate-y-1 data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:translate-y-1 data-[starting-style]:scale-95 data-[starting-style]:opacity-0 motion-reduce:transition-none dark:shadow-none"
+          >
+            {cardItem && (
+              <Details
+                item={cardItem}
+                when={whenText(cardItem.iv, true)}
+                shortAt={shortAt}
+                onClose={closeDetails}
+              />
+            )}
+          </Popover.Popup>
+        </Popover.Positioner>
+      </Popover.Portal>
+    </Popover.Root>
+  )
+
+  const legend = calendarIndex.length > 1 ? calendarIndex : []
+  const zone = `Times in ${tz.replace(/_/g, " ")}.`
   const skeleton = streaming && readyEvents.length === 0
+
   let body: React.ReactNode
-  if (!rangeStart) {
+  if (!anchor) {
     body = (
       <div className="px-3 pb-3">
         <Skeleton className="h-72 w-full rounded-[10px]" />
@@ -440,37 +804,44 @@ export function Calendar({
   } else if (view === "today") {
     body = (
       <TodayList
-        day={rangeStart}
+        day={anchor}
         items={items}
         todos={readyTodos}
         tz={tz}
         todayKey={todayKey}
         nowT={nowT}
-        itemLabel={itemLabel}
+        selected={selected}
+        itemButtonProps={itemButtonProps}
         skeleton={skeleton}
       />
     )
-  } else if (view === "month" && monthStart) {
+  } else if (view === "month") {
     body = (
       <MonthGrid
-        month={monthStart}
+        month={anchor}
         items={items}
         todayKey={todayKey}
+        selected={selected}
+        itemButtonProps={itemButtonProps}
         timeText={(t) => formatTimeShort(t, tz, locale)}
-        itemLabel={itemLabel}
+        onOpenDay={
+          options.includes("day") ? (day) => switchView("day", day) : undefined
+        }
         skeleton={skeleton}
       />
     )
   } else {
     body = (
       <TimeGrid
-        days={days}
+        days={visibleDays}
         items={items}
         tz={tz}
         todayKey={todayKey}
         workingHours={workingHours}
+        selected={selected}
+        itemButtonProps={itemButtonProps}
         timeText={timeText}
-        itemLabel={itemLabel}
+        timeShort={(t) => formatTimeShort(t, tz, locale)}
         skeleton={skeleton}
       />
     )
@@ -480,45 +851,131 @@ export function Calendar({
   const acceptedCount = acceptedIds.length
   const declinedCount = readyProposals.length - acceptedCount
   const showFooter = hasProposals || (result !== undefined && !streaming)
-  const zone = `Times in ${tz.replace(/_/g, " ")}.`
+  const showMeta = !streaming && ((title && rangeLabel) || legend.length > 0)
 
   return (
     <MotionConfig reducedMotion="user">
       <Surface
+        ref={rootRef}
         data-slot="calendar"
         data-status={status}
         data-view={view}
         aria-busy={streaming || status === "submitting"}
         aria-labelledby={titleId}
-        className={cn("@container", className)}
+        className={cn("@container", CAL_VARS, className)}
       >
         {view === "today" ? (
           // The list carries its own date line; the title is for screen readers.
           <h3 id={titleId} className="sr-only">
-            {title ?? periodLabel ?? "Today"}. {zone}
+            {title ?? rangeLabel ?? "Today"}. {zone}
           </h3>
         ) : (
-          <SurfaceHeader className="pb-2">
-            <SurfaceTitle id={titleId}>
-              {title ?? periodLabel}
-              {title && periodLabel && (
-                <span className="sr-only">, {periodLabel}</span>
-              )}
-              <span className="sr-only">. {zone}</span>
-            </SurfaceTitle>
-            {streaming && (
-              <ShimmeringText
-                text="Loading your calendar…"
-                color="var(--muted-foreground)"
-                shimmeringColor="var(--foreground)"
-                className="text-[13px]"
-              />
-            )}
+          <SurfaceHeader className="gap-2 pb-2">
+            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+              <div className="flex min-w-0 flex-col gap-0.5">
+                <SurfaceTitle id={titleId}>
+                  {title ?? rangeLabel}
+                  {title && rangeLabel && (
+                    <span className="sr-only">, {rangeLabel}</span>
+                  )}
+                  <span className="sr-only">. {zone}</span>
+                </SurfaceTitle>
+                {streaming && (
+                  <ShimmeringText
+                    text="Loading your calendar…"
+                    color="var(--muted-foreground)"
+                    shimmeringColor="var(--foreground)"
+                    className="text-[13px]"
+                  />
+                )}
+                {showMeta && (
+                  <div
+                    className={cn(
+                      genuiType.meta,
+                      "flex flex-wrap items-center gap-x-3 gap-y-0.5",
+                    )}
+                  >
+                    {title && rangeLabel && <p>{rangeLabel}</p>}
+                    {legend.length > 0 && (
+                      <ul aria-label="Calendars" className="flex flex-wrap gap-x-3">
+                        {legend.map((c, i) => (
+                          <li
+                            key={c.id ?? c.label}
+                            className="flex items-center gap-1.5"
+                          >
+                            <Marker index={i} />
+                            {c.label}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {options.length > 1 && (
+                  <Segmented
+                    label="View"
+                    value={view}
+                    options={options.map((v) => ({
+                      value: v,
+                      label: VIEW_LABELS[v],
+                    }))}
+                    onChange={(v) => v !== view && switchView(v)}
+                    fit
+                  />
+                )}
+                {showNav && (
+                  <div className="flex items-center gap-1">
+                    <WhyDisabled when={!canToday} reason="Already showing today">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={!canToday}
+                        onClick={() => goTo(todayAnchor)}
+                      >
+                        Today
+                      </Button>
+                    </WhyDisabled>
+                    <WhyDisabled reason={!canPrev ? "Nothing earlier" : undefined}>
+                      <IconTip label={`Previous ${unit}`}>
+                        <Button
+                          size="icon-sm"
+                          variant="ghost"
+                          aria-label={`Previous ${unit}`}
+                          disabled={!canPrev}
+                          onClick={() => goTo(prevAnchor)}
+                        >
+                          <ChevronLeftIcon />
+                        </Button>
+                      </IconTip>
+                    </WhyDisabled>
+                    <WhyDisabled reason={!canNext ? "Nothing later" : undefined}>
+                      <IconTip label={`Next ${unit}`}>
+                        <Button
+                          size="icon-sm"
+                          variant="ghost"
+                          aria-label={`Next ${unit}`}
+                          disabled={!canNext}
+                          onClick={() => goTo(nextAnchor)}
+                        >
+                          <ChevronRightIcon />
+                        </Button>
+                      </IconTip>
+                    </WhyDisabled>
+                  </div>
+                )}
+              </div>
+            </div>
+            <p aria-live="polite" className="sr-only">
+              {announcement}
+            </p>
           </SurfaceHeader>
         )}
 
         <AutoHeight>
           {body}
+          {detailsCard}
 
           {hasProposals && (
             <section
@@ -751,13 +1208,170 @@ export function Calendar({
 }
 
 /* ------------------------------------------------------------------------ */
-/* Views                                                                    */
+/* Pieces                                                                   */
 /* ------------------------------------------------------------------------ */
+
+type ItemButtonProps = (item: Item) => {
+  type: "button"
+  "data-cal-key": string
+  "aria-label": string
+  "aria-expanded": boolean
+  "aria-controls": string | undefined
+  "aria-haspopup": "dialog"
+  onClick: () => void
+  onKeyDown: (e: React.KeyboardEvent<HTMLElement>) => void
+}
 
 const fadeIn = {
   initial: { opacity: 0, y: 4 },
   animate: { opacity: 1, y: 0 },
   transition: genuiMotion.fade,
+}
+
+/** Shared by every event you can press: a focus ring, and the selected ring (D8). */
+const PRESSABLE =
+  "text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50"
+const SELECTED = "ring-2 ring-choice"
+
+/** Hollow events (free, timed) sit on the card, so their marker is the calendar's colour. */
+const isHollow = (item: Item) =>
+  item.state === "event" && !item.busy && !item.iv.allDay
+
+/** The calendar marker (when it has one), a warning for a conflict, then the title. */
+function ItemTitle({
+  item,
+  className,
+  showMarker = true,
+}: {
+  item: Item
+  className?: string
+  showMarker?: boolean
+}) {
+  return (
+    <span className={cn("flex min-w-0 items-center gap-1.5", className)}>
+      {showMarker && item.calendar && (
+        <Marker index={item.calendar.index} onFill={!isHollow(item)} />
+      )}
+      {item.conflicts.length > 0 && (
+        <AlertTriangleIcon aria-hidden className="size-3 shrink-0" />
+      )}
+      <span
+        className={cn(
+          "truncate",
+          item.state === "cancelling" && "line-through decoration-current/60",
+        )}
+      >
+        {item.title}
+      </span>
+    </span>
+  )
+}
+
+function Details({
+  item,
+  when,
+  shortAt,
+  onClose,
+}: {
+  item: Item
+  when: string
+  shortAt: (t: number) => string
+  onClose: () => void
+}) {
+  const href = safeHref(item.url)
+  const stateText: Partial<Record<ItemState, string>> = {
+    proposed: "Proposed",
+    moving: "Move proposed",
+    cancelling: "Cancel proposed",
+    added: "Added",
+    moved: "Moved",
+  }
+  const rows: [string, React.ReactNode][] = []
+  if (item.calendar) {
+    rows.push([
+      "Calendar",
+      <span key="cal" className="flex items-center gap-1.5">
+        <Marker index={item.calendar.index} />
+        {item.calendar.label}
+      </span>,
+    ])
+  }
+  if (item.location) rows.push(["Location", item.location])
+  if (item.attendees !== undefined) {
+    rows.push([
+      "Attendees",
+      `${item.attendees} ${item.attendees === 1 ? "person" : "people"}`,
+    ])
+  }
+  if (!item.busy && item.state === "event") rows.push(["Shown as", "Free"])
+  if (item.state === "proposed" && item.movedFrom !== undefined) {
+    rows.push(["Currently", shortAt(item.movedFrom)])
+  }
+  if (item.state === "moving" && item.movedTo !== undefined) {
+    rows.push(["Moving to", shortAt(item.movedTo)])
+  }
+  if (item.state === "moved" && item.movedFrom !== undefined) {
+    rows.push(["Was", shortAt(item.movedFrom)])
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <p className="text-[13px] font-semibold">
+            {item.title}
+            {stateText[item.state] && (
+              <span className="font-normal text-muted-foreground">
+                {" "}
+                · {stateText[item.state]}
+              </span>
+            )}
+          </p>
+          <p className={genuiType.meta}>{when}</p>
+        </div>
+        <IconTip label="Close details">
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label="Close details"
+            onClick={onClose}
+            className="-mt-1.5 -mr-1.5"
+          >
+            <XIcon />
+          </Button>
+        </IconTip>
+      </div>
+      {rows.length > 0 && (
+        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[13px]">
+          {rows.map(([label, value]) => (
+            <React.Fragment key={label}>
+              <dt className="text-muted-foreground">{label}</dt>
+              <dd className="min-w-0 break-words">{value}</dd>
+            </React.Fragment>
+          ))}
+        </dl>
+      )}
+      {item.reason && <p className="text-[13px]">{item.reason}</p>}
+      {item.conflicts.length > 0 && (
+        <p className="flex items-start gap-1.5 text-[13px]">
+          <AlertTriangleIcon aria-hidden className="mt-px size-3.5 shrink-0" />
+          Conflicts with {joinTitles(item.conflicts)}
+        </p>
+      )}
+      {href && (
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer nofollow"
+          className="inline-flex w-fit items-center gap-1 rounded-sm text-[13px] font-medium underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/50"
+        >
+          Open
+          <ExternalLinkIcon aria-hidden className="size-3" />
+          <span className="sr-only"> {item.title} (opens in a new tab)</span>
+        </a>
+      )}
+    </div>
+  )
 }
 
 /* Week and day ------------------------------------------------------------ */
@@ -768,8 +1382,10 @@ function TimeGrid({
   tz,
   todayKey,
   workingHours,
+  selected,
+  itemButtonProps,
   timeText,
-  itemLabel,
+  timeShort,
   skeleton,
 }: {
   days: string[]
@@ -777,8 +1393,11 @@ function TimeGrid({
   tz: string
   todayKey: string | null
   workingHours?: { start?: string; end?: string }
+  selected: string | null
+  itemButtonProps: ItemButtonProps
   timeText: (t: number) => string
-  itemLabel: (item: Item) => string
+  /** A compact time ('3p') for the short blocks that have no room for a line of their own. */
+  timeShort: (t: number) => string
   skeleton: boolean
 }) {
   const locale = useGenUILocale()
@@ -791,7 +1410,15 @@ function TimeGrid({
     const timed = items.flatMap((item) => {
       if (item.iv.allDay) return []
       const seg = segmentOnDay(item.iv, day, tz)
-      return seg ? [{ item, ...seg }] : []
+      if (!seg) return []
+      return [
+        {
+          item,
+          ...seg,
+          // Only the first visible piece of a multi-day event is a button.
+          primary: item.iv.startKey === day || day === days[0],
+        },
+      ]
     })
     const layout = layoutColumns(
       timed.map((s) => ({ key: s.item.key, startMin: s.startMin, endMin: s.endMin })),
@@ -812,9 +1439,9 @@ function TimeGrid({
   // A long day gets shorter hours, so the card never needs an inner scroll.
   const hourPx = hours > 12 ? 28 : 44
   const height = hours * hourPx
+  const y = (min: number) => ((min - gridStart) / 60) * hourPx
   /** Every hour line, top to bottom, as hours of the day. */
   const hourLines = Array.from({ length: hours + 1 }, (_, i) => gridStart / 60 + i)
-  const y = (min: number) => ((min - gridStart) / 60) * hourPx
   const hasAllDay = columns.some((c) => c.allDay.length > 0)
   const many = days.length > 1
 
@@ -826,13 +1453,12 @@ function TimeGrid({
       <div
         className="grid gap-x-1.5"
         style={{
-          gridTemplateColumns: `2.25rem repeat(${days.length}, minmax(${many ? "4.5rem" : "0"}, 1fr))`,
+          gridTemplateColumns: `2.25rem repeat(${days.length}, minmax(${many ? "5rem" : "0"}, 1fr))`,
         }}
       >
         {columns.map(({ day }, index) => (
           <div
             key={day}
-            aria-hidden
             className={cn(
               SCHEDULE_LABEL,
               "truncate px-0.5 pb-3",
@@ -840,7 +1466,13 @@ function TimeGrid({
             )}
             style={{ gridColumn: index + 2, gridRow: 1 }}
           >
-            {formatDay(day, "weekday", locale)} {formatDay(day, "day", locale)}
+            <span aria-hidden>
+              {formatDay(day, "weekday", locale)} {formatDay(day, "day", locale)}
+            </span>
+            <h4 className="sr-only">
+              {formatDay(day, "long", locale)}
+              {day === todayKey && ", today"}
+            </h4>
           </div>
         ))}
 
@@ -848,24 +1480,40 @@ function TimeGrid({
           columns.map(({ day, allDay }, index) => (
             <div
               key={day}
-              aria-hidden
               className="flex min-w-0 flex-col gap-1 pb-2"
               style={{ gridColumn: index + 2, gridRow: 2 }}
             >
-              {allDay.map((item) => (
-                <motion.span
-                  key={item.key}
-                  {...fadeIn}
-                  className={cn(
-                    "flex h-6 min-w-0 items-center rounded-full px-2.5 text-[13px]",
-                    itemTone(item),
-                  )}
-                >
-                  <span className={cn("truncate", isStruck(item) && "line-through")}>
-                    {item.title}
-                  </span>
-                </motion.span>
-              ))}
+              {allDay.map((item) =>
+                item.iv.startKey === day || day === days[0] ? (
+                  <motion.button
+                    key={item.key}
+                    {...itemButtonProps(item)}
+                    {...fadeIn}
+                    style={calStyle(item)}
+                    className={cn(
+                      PRESSABLE,
+                      "flex h-6 min-w-0 items-center rounded-full px-2.5 text-[13px]",
+                      itemTone(item),
+                      selected === item.key && SELECTED,
+                    )}
+                  >
+                    <ItemTitle item={item} />
+                  </motion.button>
+                ) : (
+                  // Continuation of a multi-day event; the first day's button covers it.
+                  <div
+                    key={item.key}
+                    aria-hidden
+                    style={calStyle(item)}
+                    className={cn(
+                      "flex h-6 min-w-0 items-center rounded-full px-2.5 text-[13px]",
+                      itemTone(item),
+                    )}
+                  >
+                    <ItemTitle item={item} showMarker={false} />
+                  </div>
+                ),
+              )}
             </div>
           ))}
 
@@ -908,70 +1556,76 @@ function TimeGrid({
             className="relative min-w-0"
             style={{ gridColumn: index + 2, gridRow: 3, height }}
           >
-            <h4 className="sr-only">
-              {formatDay(day, "long", locale)}
-              {day === todayKey && ", today"}
-            </h4>
             {allDay.length + timed.length === 0 && !skeleton && (
               <p className="sr-only">Nothing scheduled</p>
             )}
-            {allDay.map((item) => (
-              <p key={item.key} className="sr-only">
-                {itemLabel(item)}
-              </p>
-            ))}
-            {timed.map(({ item, startMin, endMin }) => {
+            {timed.map(({ item, startMin, endMin, primary }) => {
               const pos = layout.get(item.key) ?? { col: 0, cols: 1 }
               const h = Math.max(((endMin - startMin) / 60) * hourPx - 4, 6)
               const changed = isChanged(item)
               const showText = h >= 18 && item.state !== "moving"
-              return (
-                <motion.div
-                  key={item.key}
-                  {...fadeIn}
+              // Two lines (title, then the time) need about 54px; shorter blocks show the title.
+              const roomy = h >= 54 && pos.cols === 1
+              const style: React.CSSProperties = {
+                ...calStyle(item),
+                top: y(startMin) + 2,
+                height: h,
+                left: `calc(${(pos.col / pos.cols) * 100}% + ${pos.col ? 2 : 0}px)`,
+                width: `calc(${100 / pos.cols}% - ${pos.cols > 1 ? 2 : 0}px)`,
+                zIndex: changed ? 2 : 1,
+              }
+              const content = showText && (
+                <span
+                  aria-hidden
                   className={cn(
-                    "absolute overflow-hidden rounded-[8px]",
-                    itemTone(item),
+                    "flex min-w-0 flex-col gap-0.5 text-[13px] leading-[18px]",
+                    roomy ? "px-2 py-1.5" : h >= 30 ? "px-2 py-[7px]" : "px-2 py-px",
+                    changed && "font-semibold",
                   )}
-                  style={{
-                    top: y(startMin) + 2,
-                    height: h,
-                    left: `calc(${(pos.col / pos.cols) * 100}% + ${pos.col ? 2 : 0}px)`,
-                    width: `calc(${100 / pos.cols}% - ${pos.cols > 1 ? 2 : 0}px)`,
-                    zIndex: changed ? 2 : 1,
-                  }}
                 >
-                  {showText && (
-                    <span
-                      aria-hidden
-                      className={cn(
-                        "flex min-w-0 flex-wrap items-baseline gap-x-2 px-2 text-[13px] leading-[18px]",
-                        h >= 28 ? "py-1.5" : "py-px",
-                        changed && "font-semibold",
-                      )}
-                    >
-                      <span
-                        className={cn(
-                          "min-w-0 truncate",
-                          item.state === "cancelling" && "line-through",
-                        )}
-                      >
-                        {item.title}
+                  <span className="flex min-w-0 items-baseline gap-2">
+                    <ItemTitle
+                      item={item}
+                      showMarker={pos.cols === 1 && !(changed && !roomy)}
+                      className="flex-1"
+                    />
+                    {changed && !roomy && (
+                      <span className={cn(SCHEDULE_LABEL, "shrink-0 font-normal")}>
+                        {timeShort(item.iv.start)}
                       </span>
-                      {changed && (
-                        <span
-                          className={cn(
-                            SCHEDULE_LABEL,
-                            "shrink-0 font-normal text-background/70",
-                          )}
-                        >
-                          {timeText(item.iv.start)}
-                        </span>
-                      )}
+                    )}
+                  </span>
+                  {roomy && (
+                    <span className={cn(SCHEDULE_LABEL, "truncate font-normal")}>
+                      {timeText(item.iv.start)}
                     </span>
                   )}
-                  <span className="sr-only">{itemLabel(item)}</span>
-                </motion.div>
+                </span>
+              )
+              return primary ? (
+                <motion.button
+                  key={item.key}
+                  {...itemButtonProps(item)}
+                  {...fadeIn}
+                  style={style}
+                  className={cn(
+                    PRESSABLE,
+                    "absolute overflow-hidden rounded-[8px]",
+                    itemTone(item),
+                    selected === item.key && SELECTED,
+                  )}
+                >
+                  {content}
+                </motion.button>
+              ) : (
+                <div
+                  key={item.key}
+                  aria-hidden
+                  style={style}
+                  className={cn("absolute overflow-hidden rounded-[8px]", itemTone(item))}
+                >
+                  {content}
+                </div>
               )
             })}
             {skeleton && index % 2 === 0 && (
@@ -989,22 +1643,24 @@ function TimeGrid({
 
 /* Month ------------------------------------------------------------------- */
 
-/** Events a day cell shows before the rest fold into "+N more". */
-const MONTH_SHOWS = 3
-
 function MonthGrid({
   month,
   items,
   todayKey,
+  selected,
+  itemButtonProps,
   timeText,
-  itemLabel,
+  onOpenDay,
   skeleton,
 }: {
   month: string
   items: Item[]
   todayKey: string | null
+  selected: string | null
+  itemButtonProps: ItemButtonProps
   timeText: (t: number) => string
-  itemLabel: (item: Item) => string
+  /** Pressing a date opens that day, when the Day view is available. */
+  onOpenDay?: (day: string) => void
   skeleton: boolean
 }) {
   const locale = useGenUILocale()
@@ -1038,10 +1694,14 @@ function MonthGrid({
               ? dayItems
               : dayItems.slice(0, MONTH_SHOWS)
           const hidden = dayItems.length - shown.length
+          const dateClass = cn(
+            "inline-flex h-6 min-w-6 items-center justify-center self-start rounded-full px-1.5 text-[13px] tabular-nums",
+            !inMonth && "text-muted-foreground/60",
+            isToday && "bg-foreground font-medium text-background",
+          )
           return (
             <div
               key={day}
-              aria-hidden={inMonth ? undefined : true}
               className={cn(
                 "flex min-h-[6.75rem] min-w-0 flex-col gap-1 rounded-[10px] p-1.5",
                 inMonth
@@ -1049,21 +1709,29 @@ function MonthGrid({
                   : "bg-foreground/[0.015] dark:bg-foreground/[0.03]",
               )}
             >
-              <span
-                aria-hidden
-                className={cn(
-                  "inline-flex h-6 min-w-6 items-center self-start rounded-full px-1.5 text-[13px] tabular-nums",
-                  !inMonth && "text-muted-foreground/60",
-                  isToday && "bg-foreground font-medium text-background",
-                )}
-              >
-                {formatDay(day, "day", locale)}
-              </span>
-              {inMonth && (
-                <h4 className="sr-only">
-                  {formatDay(day, "long", locale)}
-                  {isToday && ", today"}
-                </h4>
+              {inMonth && onOpenDay ? (
+                <button
+                  type="button"
+                  onClick={() => onOpenDay(day)}
+                  aria-label={`Open ${formatDay(day, "long", locale)}${isToday ? ", today" : ""}`}
+                  className={cn(
+                    dateClass,
+                    "outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50",
+                    !isToday && "hover:bg-foreground/10",
+                  )}
+                >
+                  {formatDay(day, "day", locale)}
+                </button>
+              ) : (
+                <span aria-hidden={!inMonth || undefined} className={dateClass}>
+                  {formatDay(day, "day", locale)}
+                  {inMonth && (
+                    <span className="sr-only">
+                      , {formatDay(day, "long", locale)}
+                      {isToday && ", today"}
+                    </span>
+                  )}
+                </span>
               )}
               {hidden > 0 && (
                 <button
@@ -1078,40 +1746,37 @@ function MonthGrid({
               )}
               <ul className="mt-auto flex min-w-0 flex-col gap-1">
                 {shown.map((item) => (
-                  <motion.li
-                    key={item.key}
-                    {...fadeIn}
-                    className={cn(
-                      "flex h-[22px] min-w-0 items-center gap-1.5 rounded-[6px] px-1.5 text-[13px]",
-                      itemTone(item),
-                    )}
-                  >
-                    <span
-                      aria-hidden
+                  <li key={item.key} className="min-w-0">
+                    <motion.button
+                      {...itemButtonProps(item)}
+                      {...fadeIn}
+                      style={calStyle(item)}
                       className={cn(
-                        "min-w-0 flex-1 truncate",
+                        PRESSABLE,
+                        "flex h-[22px] w-full min-w-0 items-center gap-1.5 rounded-[6px] px-1.5 text-[13px]",
+                        itemTone(item),
                         isChanged(item) && "font-semibold",
-                        isStruck(item) && "line-through",
+                        selected === item.key && SELECTED,
                       )}
                     >
-                      {item.title}
-                    </span>
-                    {!item.iv.allDay && item.iv.startKey === day && (
                       <span
-                        aria-hidden
                         className={cn(
-                          SCHEDULE_LABEL,
-                          "shrink-0",
-                          isChanged(item)
-                            ? "text-background/70"
-                            : "text-muted-foreground",
+                          "min-w-0 flex-1 truncate",
+                          item.state === "cancelling" && "line-through",
                         )}
                       >
-                        {timeText(item.iv.start)}
+                        {item.title}
                       </span>
-                    )}
-                    <span className="sr-only">{itemLabel(item)}</span>
-                  </motion.li>
+                      {!item.iv.allDay && item.iv.startKey === day && (
+                        <span
+                          aria-hidden
+                          className={cn(SCHEDULE_LABEL, "shrink-0 font-normal")}
+                        >
+                          {timeText(item.iv.start)}
+                        </span>
+                      )}
+                    </motion.button>
+                  </li>
                 ))}
               </ul>
               {skeleton && inMonth && Number(day.slice(8, 10)) % 4 === 1 && (
@@ -1134,7 +1799,8 @@ function TodayList({
   tz,
   todayKey,
   nowT,
-  itemLabel,
+  selected,
+  itemButtonProps,
   skeleton,
 }: {
   day: string
@@ -1143,7 +1809,8 @@ function TodayList({
   tz: string
   todayKey: string | null
   nowT: number | null
-  itemLabel: (item: Item) => string
+  selected: string | null
+  itemButtonProps: ItemButtonProps
   skeleton: boolean
 }) {
   const locale = useGenUILocale()
@@ -1152,7 +1819,8 @@ function TodayList({
   const eventCount = dayItems.filter((i) => i.state !== "proposed").length
   const counts = [
     `${eventCount} ${eventCount === 1 ? "event" : "events"}`,
-    todos.length > 0 && `${todos.length} ${todos.length === 1 ? "to-do" : "to-dos"}`,
+    todos.length > 0 &&
+      `${todos.length} ${todos.length === 1 ? "to-do" : "to-dos"}`,
   ]
     .filter(Boolean)
     .join(" · ")
@@ -1191,68 +1859,49 @@ function TodayList({
             item.state !== "proposed"
           const isNow = live && iv.start <= nowT && nowT < iv.end
           const past = live && iv.end > iv.start && iv.end <= nowT
-          const changed = isChanged(item)
           const aside = isNow
             ? "Now"
             : seg
               ? formatDuration(seg.endMin - seg.startMin, locale)
               : null
+          const props = itemButtonProps(item)
           return (
-            <motion.li
-              key={item.key}
-              {...fadeIn}
-              className={cn(
-                row,
-                changed
-                  ? CHANGED_FILL
-                  : isStruck(item)
-                    ? cn(DASHED, "text-muted-foreground")
-                    : item.busy || iv.allDay
-                      ? "border border-border bg-foreground/[0.03] dark:bg-foreground/[0.06]"
-                      : FREE,
-                past && "opacity-60",
-              )}
-            >
-              <span
-                aria-hidden
+            <motion.li key={item.key} {...fadeIn}>
+              <button
+                {...props}
+                aria-label={`${props["aria-label"]}${isNow ? ", happening now" : ""}${past ? ", over" : ""}`}
+                style={calStyle(item)}
                 className={cn(
-                  SCHEDULE_LABEL,
-                  "truncate",
-                  changed ? "text-background/70" : "text-muted-foreground",
+                  PRESSABLE,
+                  row,
+                  "w-full",
+                  itemTone(item),
+                  selected === item.key && SELECTED,
                 )}
               >
-                {when}
-              </span>
-              <span
-                aria-hidden
-                className={cn(
-                  genuiType.title,
-                  titleCell,
-                  "break-words leading-snug @sm:truncate",
-                  isStruck(item) && "line-through decoration-muted-foreground/70",
-                )}
-              >
-                {item.title}
-              </span>
-              <span
-                aria-hidden
-                className={cn(
-                  SCHEDULE_LABEL,
-                  "col-start-2 row-start-1 shrink-0 @sm:col-start-3",
-                  isNow
-                    ? "text-foreground"
-                    : changed
-                      ? "text-background/70"
-                      : "text-muted-foreground",
-                )}
-              >
-                {aside}
-              </span>
-              <span className="sr-only">
-                {itemLabel(item)}
-                {isNow && ", happening now"}
-                {past && ", over"}
-              </span>
+                <span aria-hidden className={cn(SCHEDULE_LABEL, "truncate")}>
+                  {when}
+                </span>
+                <ItemTitle
+                  item={item}
+                  className={cn(
+                    genuiType.title,
+                    titleCell,
+                    "leading-snug",
+                    isChanged(item) && "font-semibold",
+                  )}
+                />
+                <span
+                  aria-hidden
+                  className={cn(
+                    SCHEDULE_LABEL,
+                    "col-start-2 row-start-1 shrink-0 @sm:col-start-3",
+                    isNow && "font-semibold",
+                  )}
+                >
+                  {aside}
+                </span>
+              </button>
             </motion.li>
           )
         })}
@@ -1266,7 +1915,9 @@ function TodayList({
             <span aria-hidden className={cn(SCHEDULE_LABEL, "text-muted-foreground")}>
               To do
             </span>
-            <span className={cn(titleCell, "flex items-center gap-2.5 @sm:col-span-2")}>
+            <span
+              className={cn(titleCell, "flex items-center gap-2.5 @sm:col-span-2")}
+            >
               {/* A status mark, not a control: ticking a task belongs to the To-do List. */}
               <span
                 aria-hidden

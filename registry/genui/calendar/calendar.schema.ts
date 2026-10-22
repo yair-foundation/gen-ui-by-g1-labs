@@ -29,12 +29,36 @@ export const calendarEventSchema = z.object({
       "DATA-BOUND. Same format as start. For all-day events the end date is exclusive: '2026-10-15' to '2026-10-17' is two days.",
     ),
   allDay: z.boolean().optional().describe("DATA-BOUND."),
+  calendar: z
+    .string()
+    .optional()
+    .describe(
+      "DATA-BOUND. Which calendar it belongs to: an id from `calendars`, or a name like 'Work'. Sets the event's colour.",
+    ),
+  location: z.string().optional().describe("DATA-BOUND."),
+  attendees: z
+    .number()
+    .int()
+    .min(0)
+    .optional()
+    .describe("DATA-BOUND. Number of attendees."),
   busy: z
     .boolean()
     .optional()
     .describe(
       "DATA-BOUND. Whether the event blocks time. Defaults to true for timed events and false for all-day events, which only count as busy when set to true.",
     ),
+  url: z
+    .string()
+    .optional()
+    .describe(
+      "DATA-BOUND. Link to the event in the calendar app. http(s) only.",
+    ),
+})
+
+export const calendarSourceSchema = z.object({
+  id: z.string().describe("DATA-BOUND. Matches `calendar` on events."),
+  label: z.string().describe("DATA-BOUND. e.g. 'Work'."),
 })
 
 export const calendarTodoSchema = z.object({
@@ -97,7 +121,7 @@ export const calendarSchema = z.object({
     .enum(["week", "day", "month", "today"])
     .default("week")
     .describe(
-      "'week': a time grid of up to 7 days from range.start. 'day': the same grid for one day. 'month': the month of range.start as day tiles. 'today': a list of one day's events (range.start) and to-dos, for 'what's on today?'.",
+      "The view shown first; the user can switch between week, day and month and page forward and back when the events reach further. 'week': a time grid of up to 7 days from range.start. 'day': the same grid for one day. 'month': the month of range.start as day tiles. 'today': a list of one day's events (range.start) and to-dos, for 'what's on today?'; it has no switch.",
     ),
   range: z
     .object({
@@ -111,10 +135,10 @@ export const calendarSchema = z.object({
         .number()
         .int()
         .min(1)
-        .max(7)
+        .max(42)
         .optional()
         .describe(
-          "Week only: how many days the grid shows, e.g. 5 for a work week. Defaults to 7.",
+          "How many days the events cover. Defaults to 1 (day, today), 7 (week) or the rest of the month (month). A week of 5 shows a work week; more than 7 lets the user page through weeks.",
         ),
     })
     .describe("The period the events were fetched for."),
@@ -123,6 +147,13 @@ export const calendarSchema = z.object({
     .max(300)
     .describe(
       "DATA-BOUND. Every event in the range, read from the calendar connector.",
+    ),
+  calendars: z
+    .array(calendarSourceSchema)
+    .max(6)
+    .optional()
+    .describe(
+      "DATA-BOUND. The user's calendars, in legend order. Each gets its own colour; events point to one with `calendar`.",
     ),
   todos: z
     .array(calendarTodoSchema)
@@ -156,6 +187,7 @@ export const calendarSchema = z.object({
 })
 
 export type CalendarEvent = z.input<typeof calendarEventSchema>
+export type CalendarSource = z.input<typeof calendarSourceSchema>
 export type CalendarTodo = z.input<typeof calendarTodoSchema>
 export type CalendarProposal = z.input<typeof calendarProposalSchema>
 export type CalendarInput = z.input<typeof calendarSchema>
@@ -189,13 +221,13 @@ export const calendarGuidance = {
     "The question has a one-line answer, e.g. 'When is my next meeting?'. Say it in text.",
   ],
   rules: [
-    "Every event must come from the calendar connector, with its real id and times; every to-do from the task connector.",
+    "Every event must come from the calendar connector, with its real id, times and calendar; every to-do from the task connector. Pass the user's calendars too, so events are coloured by calendar.",
     "Set timezone to the user's zone and give times with offsets.",
     "For view 'today', set range.start to that day and pass only that day's events and to-dos. Use 'day' instead when the user wants that day as a timeline.",
     "Pass the whole range you fetched, including free events, so overlaps and conflicts are accurate.",
     "Use proposals for every change; give each a one-line reason. For move and cancel, set eventId to the existing event.",
     "Without proposals the calendar is display-only and returns nothing.",
-    "To show another stretch of time, call it again with a new range and view: week shows up to 7 days (5 for a work week), month shows the whole month. Its look is fixed; say so if asked to restyle it.",
+    "To show another stretch of time, call it again with a new range and view: week shows up to 7 days at a time (5 for a work week), month shows the whole month. Its look is fixed; say so if asked to restyle it.",
     "Write only the accepted proposal ids from an 'apply' result. On 'revise' or 'dismiss', write nothing.",
   ],
 } as const

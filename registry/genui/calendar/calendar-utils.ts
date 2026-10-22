@@ -17,7 +17,11 @@ export type CalendarEventLike = {
   start: string
   end: string
   allDay?: boolean
+  calendar?: string
+  location?: string
+  attendees?: number
   busy?: boolean
+  url?: string
 }
 
 export type CalendarProposalLike = {
@@ -194,6 +198,13 @@ export function daysInMonth(key: string): number {
   return new Date(Date.UTC(y, m, 0)).getUTCDate()
 }
 
+export function addMonths(key: string, n: number): string {
+  const y = Number(key.slice(0, 4))
+  const m = Number(key.slice(5, 7)) - 1 + n
+  const d = new Date(Date.UTC(y, m, 1))
+  return d.toISOString().slice(0, 10)
+}
+
 /** Consecutive day keys. */
 export function dayRange(start: string, days: number): string[] {
   return Array.from({ length: Math.max(0, days) }, (_, i) => addDays(start, i))
@@ -302,9 +313,9 @@ export function formatTime(
 }
 
 /**
- * A compact hour label for the time grid: '9A' and '12P' where the locale
+ * A compact hour label for the time grid: '9a' and '12p' where the locale
  * says AM / PM, the bare hour ('09', '16') in 24-hour locales, the full
- * label where the day period isn't Latin.
+ * label where the day period isn't Latin. Lowercase: no all-caps labels.
  */
 export function formatHour(hour: number, locale: string = DEFAULT_LOCALE) {
   const parts = new Intl.DateTimeFormat(locale, {
@@ -318,11 +329,11 @@ export function formatHour(hour: number, locale: string = DEFAULT_LOCALE) {
   if (!/^[ap]\.?\s?m\.?$/i.test(period.trim())) {
     return parts.map((p) => p.value).join("")
   }
-  return `${h}${period.trim()[0].toUpperCase()}`
+  return `${h}${period.trim()[0].toLowerCase()}`
 }
 
 /**
- * A compact time for tight spaces (month pills): '10A' and '1:30P' where the
+ * A compact time for tight spaces (month pills): '10a' and '1:30p' where the
  * locale says AM / PM (the same rule as `formatHour`), '10:00' and '13:30'
  * in 24-hour locales.
  */
@@ -346,7 +357,7 @@ export function formatTimeShort(
   }
   const h = parts.find((p) => p.type === "hour")?.value ?? ""
   const m = parts.find((p) => p.type === "minute")?.value ?? "00"
-  return `${h}${m === "00" ? "" : `:${m}`}${period[0].toUpperCase()}`
+  return `${h}${m === "00" ? "" : `:${m}`}${period[0].toLowerCase()}`
 }
 
 /**
@@ -610,6 +621,18 @@ export function segmentOnDay(
   const startMin = iv.start <= dayStart ? 0 : minutesOfDay(iv.start, timeZone)
   const endMin = end >= nextStart ? 1440 : minutesOfDay(end, timeZone)
   return { startMin, endMin: Math.max(endMin, startMin) }
+}
+
+/** Whether any interval touches the days [start, start + days). */
+export function anyInDays(
+  intervals: Interval[],
+  start: string,
+  days: number,
+): boolean {
+  const end = addDays(start, days)
+  return intervals.some(
+    (iv) => diffDays(iv.startKey, end) > 0 && diffDays(start, iv.endKey) > 0,
+  )
 }
 
 /** Chronological order: start, then all-day first, then longer first. */
