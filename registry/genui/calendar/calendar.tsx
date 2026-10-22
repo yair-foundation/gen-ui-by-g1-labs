@@ -3,21 +3,16 @@
 import * as React from "react"
 import {
   AlertTriangleIcon,
-  ArrowRightIcon,
   CheckIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
-  ExternalLinkIcon,
   MessageSquareIcon,
   XIcon,
 } from "lucide-react"
-import { Popover } from "@base-ui/react/popover"
 import { MotionConfig, motion } from "motion/react"
 
 import { cn } from "@/lib/utils"
 import { AutoHeight } from "@/components/animate-ui/primitives/effects/auto-height"
 import { ShimmeringText } from "@/components/animate-ui/primitives/texts/shimmering"
-import { Badge } from "@/components/ui/badge"
+import { Checkbox } from "@/components/animate-ui/components/base/checkbox"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -30,54 +25,44 @@ import {
   genuiMotion,
 } from "@/components/genui/surface"
 import { useGenUILocale } from "@/components/genui/locale"
+import { IconTip, WhyDisabled } from "@/components/genui/hint"
+import { ScrollFade } from "@/components/genui/scroll-fade"
 
 import type {
   CalendarEvent,
   CalendarInput,
   CalendarProposal,
   CalendarResult,
-  CalendarSource,
+  CalendarTodo,
   CalendarView,
 } from "./calendar.schema"
 import {
   type Interval,
-  addDays,
-  addMonths,
-  agendaBlockHeight,
-  anyInDays,
   applyProposals,
   compareIntervals,
   dayKeyOf,
   dayRange,
-  daysInMonth,
   diffDays,
   eventInterval,
   findConflicts,
   firstDayOfWeek,
   formatDay,
+  formatDuration,
   formatHour,
   formatRangeLabel,
   formatTime,
-  formatTimeRange,
-  formatTimeZoneLabel,
+  formatTimeShort,
   formatWeekdayAt,
   isBusy,
   layoutColumns,
-  minutesOfDay,
   monthGrid,
   normalizeDayKey,
-  nowAndNext,
   parseInstant,
   safeTimeZone,
   segmentOnDay,
   startOfMonth,
-  startOfWeek,
 } from "./calendar-utils"
-import { IconTip, WhyDisabled } from "@/components/genui/hint"
-import { ScrollFade } from "@/components/genui/scroll-fade"
-import { Segmented } from "@/components/genui/segmented"
 
-/** Explains a disabled button. Disabled controls swallow pointer events, so the span takes the hover. */
 export type CalendarStatus =
   | "streaming"
   | "ready"
@@ -100,16 +85,13 @@ type ReadyProposal = CalendarProposal & {
 }
 
 export type CalendarProps = Partial<
-  Omit<
-    CalendarInput,
-    "range" | "events" | "proposals" | "calendars" | "workingHours"
-  >
+  Omit<CalendarInput, "range" | "events" | "proposals" | "todos" | "workingHours">
 > & {
   range?: Partial<CalendarInput["range"]>
-  /** Events and proposals may be partial while the tool call streams. */
+  /** Events, to-dos and proposals may be partial while the tool call streams. */
   events?: Partial<CalendarEvent>[]
+  todos?: Partial<CalendarTodo>[]
   proposals?: Partial<CalendarProposal>[]
-  calendars?: Partial<CalendarSource>[]
   workingHours?: Partial<NonNullable<CalendarInput["workingHours"]>>
   /**
    * Lifecycle, controlled by the host. 'streaming' while the agent is still
@@ -145,89 +127,49 @@ type Item = {
   title: string
   iv: Interval
   state: ItemState
-  calendar?: { label: string; index: number }
-  location?: string
-  attendees?: number
-  url?: string
   busy: boolean
-  reason?: string
-  /** On the original of a proposed move: where it goes. */
-  movedTo?: number
-  /** On a proposed or applied move: where it was. */
-  movedFrom?: number
   /** Titles of busy events a proposal overlaps. */
   conflicts: string[]
 }
 
-const VIEW_LABELS: Record<CalendarView, string> = {
-  day: "Day",
-  week: "Week",
-  month: "Month",
-  agenda: "Agenda",
-  today: "Today",
+const VIEWS: CalendarView[] = ["week", "day", "month", "today"]
+
+/** What a block's state means, said in words: the sr text never relies on the look. */
+const STATE_TEXT: Partial<Record<ItemState, string>> = {
+  proposed: "proposed",
+  moving: "proposed to move from here",
+  cancelling: "proposed to cancel",
+  added: "added",
+  moved: "moved",
 }
-const VIEW_ORDER: CalendarView[] = ["day", "week", "month", "agenda"]
-const HOUR_PX = 40
-const MONTH_COLLAPSE_OVER = 5
-const MONTH_COLLAPSED_SHOWS = 3
 
 /**
- * Calendar colours: solid fills with their own text colour, after Google
- * Calendar's dark theme (slate blue, teal, gold, green, and grey for the
- * default). Light mode uses deeper fills with white text. Put on the root:
- * `--cal-n` is the fill, `--cal-fg-n` the text on it. Past the fourth calendar
- * (and for events with no calendar) the grey (4) is used.
+ * The schedule's look (D71): every event a soft neutral block; a change (a
+ * proposal, or one just applied) the solid foreground block; the slot a move
+ * leaves and an event being cancelled a dashed outline; a free event hollow.
  */
-const CAL_VARS =
-  "[--cal-0:#5560a8] [--cal-fg-0:#ffffff] [--cal-1:#3e8e7e] [--cal-fg-1:#ffffff] [--cal-2:#9a7400] [--cal-fg-2:#ffffff] [--cal-3:#3d8a5c] [--cal-fg-3:#ffffff] [--cal-4:#6c6f74] [--cal-fg-4:#ffffff] dark:[--cal-0:#4a5588] dark:[--cal-fg-0:#e6e9f8] dark:[--cal-1:#5a9a8e] dark:[--cal-fg-1:#0a1f1b] dark:[--cal-2:#e9c45b] dark:[--cal-fg-2:#2a2100] dark:[--cal-3:#6db38a] dark:[--cal-fg-3:#0d2416] dark:[--cal-4:#505256] dark:[--cal-fg-4:#ececec]"
+const BUSY_FILL = "bg-foreground/[0.09] dark:bg-foreground/[0.2]"
+const CHANGED_FILL = "bg-foreground text-background"
+const DASHED = "border border-dashed border-foreground/45"
+const FREE = "border border-border text-muted-foreground"
 
-const CAL_COLORS = 4
-const calSlot = (index: number | undefined) =>
-  index !== undefined && index < CAL_COLORS ? index : CAL_COLORS
+const isChanged = (item: Item) =>
+  item.state === "proposed" || item.state === "added" || item.state === "moved"
+const isStruck = (item: Item) =>
+  item.state === "moving" || item.state === "cancelling"
 
-/** A calendar's colour, for its marker in the legend and in plain rows. */
-const calColor = (index: number) => `var(--cal-${calSlot(index)})`
-
-/** Shapes back the colour up, so a calendar is never told apart by colour alone. */
-const MARKERS = [
-  "rounded-full bg-current",
-  "rounded-full border-2 border-current",
-  "rounded-[2px] bg-current",
-  "rounded-[2px] border-2 border-current",
-  "rotate-45 rounded-[1px] bg-current",
-  "rotate-45 rounded-[1px] border-2 border-current",
-]
-
-/** `onFill`: the marker sits on its calendar's own fill, so it takes the text colour instead. */
-function Marker({ index, onFill = false }: { index: number; onFill?: boolean }) {
-  return (
-    <span
-      aria-hidden
-      style={onFill ? undefined : { color: calColor(index) }}
-      className={cn(
-        "inline-block size-2 shrink-0",
-        MARKERS[index % MARKERS.length],
-      )}
-    />
-  )
+function itemTone(item: Item) {
+  if (isChanged(item)) return CHANGED_FILL
+  if (isStruck(item)) return cn(DASHED, "text-muted-foreground")
+  return item.busy ? BUSY_FILL : FREE
 }
 
-/** Sets the event's fill and text colour from its calendar (grey when it has none). */
-const calStyle = (item: Item): React.CSSProperties => {
-  const slot = calSlot(item.calendar?.index)
-  return {
-    "--cal": `var(--cal-${slot})`,
-    "--cal-fg": `var(--cal-fg-${slot})`,
-  } as React.CSSProperties
-}
-
-/** Events that are drawn as a solid fill: real, busy ones. Free, proposed and struck ones stay outlined. */
-const isFilled = (item: Item) =>
-  item.state !== "proposed" && !struck(item) && item.busy
-
-/** Solid fill with its own text colour; muted text inside follows it. */
-const CAL_FILL =
-  "bg-[var(--cal)] text-[color:var(--cal-fg)] [--foreground:var(--cal-fg)] [--muted-foreground:color-mix(in_oklab,var(--cal-fg)_72%,transparent)] hover:brightness-110"
+/**
+ * Times and days on the schedule: 'MON 12', '9A', '9:30 AM', '15 MIN'.
+ * The `schedule-label` role in the design foundations.
+ */
+const SCHEDULE_LABEL =
+  "font-mono text-[13px] uppercase leading-none tracking-[0.06em] tabular-nums"
 
 const isReadyEvent = (e: Partial<CalendarEvent>): e is ReadyEvent =>
   typeof e.id === "string" &&
@@ -244,15 +186,8 @@ const isReadyProposal = (p: Partial<CalendarProposal>): p is ReadyProposal =>
     ((p.kind === "move" || p.kind === "cancel") &&
       typeof p.eventId === "string"))
 
-function safeHref(url: string | undefined): string | null {
-  if (!url) return null
-  try {
-    const u = new URL(url)
-    return u.protocol === "http:" || u.protocol === "https:" ? u.href : null
-  } catch {
-    return null
-  }
-}
+const isReadyTodo = (t: Partial<CalendarTodo>): t is CalendarTodo =>
+  typeof t.id === "string" && typeof t.title === "string"
 
 function parseHHmm(value: string | undefined): number | null {
   const m = value ? /^(\d{1,2}):(\d{2})$/.exec(value) : null
@@ -267,6 +202,10 @@ function joinTitles(titles: string[]) {
   return `${titles[0]} and ${titles.length - 1} more`
 }
 
+/** Whether an item touches a day. */
+const onDay = (item: Item, day: string) =>
+  diffDays(item.iv.startKey, day) >= 0 && diffDays(day, item.iv.endKey) > 0
+
 /* ------------------------------------------------------------------------ */
 /* Component                                                                */
 /* ------------------------------------------------------------------------ */
@@ -277,7 +216,7 @@ export function Calendar({
   view: viewProp,
   range,
   events = [],
-  calendars = [],
+  todos = [],
   proposals = [],
   workingHours,
   now,
@@ -290,8 +229,6 @@ export function Calendar({
   const tz = safeTimeZone(timezone)
   const baseId = React.useId()
   const titleId = `${baseId}-title`
-  const detailsId = `${baseId}-details`
-  const rootRef = React.useRef<HTMLElement>(null)
 
   /* Decision state, restored from `result`. */
   const [declined, setDeclined] = React.useState<Set<string>>(
@@ -319,37 +256,8 @@ export function Calendar({
   const streaming = status === "streaming"
   const locked = status !== "ready"
 
-  /* Local view state. */
-  const [userView, setUserView] = React.useState<CalendarView | null>(null)
-  const [userAnchor, setUserAnchor] = React.useState<string | null>(null)
-  const [selected, setSelected] = React.useState<string | null>(null)
-  const [expandedDays, setExpandedDays] = React.useState<Set<string>>(
-    () => new Set(),
-  )
-  const [announcement, setAnnouncement] = React.useState("")
-  const [narrow, setNarrow] = React.useState(false)
+  // The viewer's clock, for today and what's on now.
   const [clock, setClock] = React.useState<number | null>(null)
-  const firstDay = React.useMemo(() => firstDayOfWeek(locale), [locale])
-
-  // Narrow containers get the agenda instead of the week grid: below ~600px
-  // seven day columns get too thin for an event title.
-  React.useEffect(() => {
-    const el = rootRef.current
-    if (!el || typeof ResizeObserver === "undefined") return
-    const mq = window.matchMedia("(max-width: 639px)")
-    const update = () =>
-      setNarrow(mq.matches || el.getBoundingClientRect().width < 600)
-    update()
-    const observer = new ResizeObserver(update)
-    observer.observe(el)
-    mq.addEventListener("change", update)
-    return () => {
-      observer.disconnect()
-      mq.removeEventListener("change", update)
-    }
-  }, [])
-
-  // The viewer's clock, for "today" and the current-time line.
   React.useEffect(() => {
     if (now) return
     setClock(Date.now())
@@ -362,67 +270,27 @@ export function Calendar({
   /* Data. */
   const readyEvents = events.filter(isReadyEvent)
   const readyProposals = proposals.filter(isReadyProposal)
+  const readyTodos = todos.filter(isReadyTodo)
   const hasProposals = readyProposals.length > 0
   const isAccepted = (id: string) => !declined.has(id)
   const acceptedIds = readyProposals
     .filter((p) => isAccepted(p.id))
     .map((p) => p.id)
 
-  const calendarIndex = React.useMemo(() => {
-    const list: { id?: string; label: string }[] = calendars
-      .filter((c): c is CalendarSource => !!c.id && !!c.label)
-      .map((c) => ({ id: c.id, label: c.label }))
-    for (const e of events) {
-      if (
-        e.calendar &&
-        !list.some((c) => c.id === e.calendar || c.label === e.calendar)
-      ) {
-        list.push({ label: e.calendar })
-      }
-    }
-    return list
-  }, [calendars, events])
-
-  const resolveCalendar = (name: string | undefined) => {
-    if (!name) return undefined
-    const index = calendarIndex.findIndex(
-      (c) => c.id === name || c.label === name,
-    )
-    return index === -1
-      ? undefined
-      : { label: calendarIndex[index].label, index }
-  }
-
   const items: Item[] = (() => {
     const out: Item[] = []
-    const base = (e: ReadyEvent) => ({
-      title: e.title,
-      calendar: resolveCalendar(e.calendar),
-      location: e.location,
-      attendees: e.attendees,
-      url: e.url,
-      busy: isBusy(e),
-      conflicts: [] as string[],
-    })
-
     if (status === "applied") {
-      // Decided: the resulting schedule, with what changed labelled.
-      for (const e of applyProposals(
-        readyEvents,
-        readyProposals,
-        acceptedIds,
-      )) {
+      // Decided: the resulting schedule, with what changed marked.
+      for (const e of applyProposals(readyEvents, readyProposals, acceptedIds)) {
         const iv = eventInterval(e, tz)
         if (!iv) continue
         out.push({
-          ...base(e),
           key: e.change === "added" ? `p:${e.id}` : `e:${e.id}`,
+          title: e.title,
           iv,
           state: e.change ?? "event",
-          movedFrom: e.previous
-            ? (parseInstant(e.previous.start, tz) ?? undefined)
-            : undefined,
-          reason: readyProposals.find((p) => p.id === e.proposalId)?.reason,
+          busy: isBusy(e),
+          conflicts: [],
         })
       }
       return out.sort((a, b) => compareIntervals(a.iv, b.iv))
@@ -445,15 +313,12 @@ export function Calendar({
       if (!iv) continue
       const p = byEvent.get(e.id)
       out.push({
-        ...base(e),
         key: `e:${e.id}`,
+        title: e.title,
         iv,
         state: p ? (p.kind === "move" ? "moving" : "cancelling") : "event",
-        movedTo:
-          p?.kind === "move"
-            ? (parseInstant(p.start, tz) ?? undefined)
-            : undefined,
-        reason: p?.kind === "cancel" ? p.reason : undefined,
+        busy: isBusy(e),
+        conflicts: [],
       })
     }
     for (const p of active) {
@@ -465,180 +330,53 @@ export function Calendar({
           ? readyEvents.find((e) => e.id === p.eventId)
           : undefined
       out.push({
-        ...(original
-          ? base(original)
-          : {
-              title: p.title,
-              busy: true,
-              conflicts: [],
-            }),
-        title: original?.title ?? p.title,
         key: `p:${p.id}`,
+        title: original?.title ?? p.title,
         iv,
         state: "proposed",
-        movedFrom: original
-          ? (parseInstant(original.start, tz) ?? undefined)
-          : undefined,
-        reason: p.reason,
+        busy: true,
         conflicts: (conflicts.get(p.id) ?? []).map((c) => c.title),
       })
     }
     return out.sort((a, b) => compareIntervals(a.iv, b.iv))
   })()
-  const intervals = items.map((i) => i.iv)
 
-  /* Range, views and the visible period. */
+  /* The period shown. */
+  const view: CalendarView = VIEWS.includes(viewProp as CalendarView)
+    ? (viewProp as CalendarView)
+    : "week"
   const rangeStart =
     normalizeDayKey(range?.start) ??
     // Without a range, wait while streaming; then fall back to the events.
     (streaming ? null : items[0]?.iv.startKey || todayKey || null)
-  const initialView: CalendarView = viewProp ?? "week"
-  const spanDays = rangeStart
-    ? (range?.days ??
-      (initialView === "day" || initialView === "today"
-        ? 1
-        : initialView === "month"
-          ? daysInMonth(rangeStart) - Number(rangeStart.slice(8, 10)) + 1
-          : 7))
-    : 7
-
-  const options = VIEW_ORDER.filter(
-    (v) =>
-      v === initialView ||
-      v === "agenda" ||
-      (v === "day" && spanDays <= 7) ||
-      (v === "week" && spanDays > 1) ||
-      (v === "month" && spanDays >= 14),
-  ).filter((v) => !(narrow && v === "week"))
-  const chosenView = userView ?? initialView
-  const view: CalendarView =
-    narrow && chosenView === "week" ? "agenda" : chosenView
-
-  const anchorFor = (v: CalendarView, focus: string): string => {
-    if (!rangeStart) return focus
-    if (v === "month") return startOfMonth(focus)
-    if (v === "week") {
-      if (spanDays > 7) return startOfWeek(focus, firstDay)
-      return addDays(
-        rangeStart,
-        Math.floor(diffDays(rangeStart, focus) / 7) * 7,
-      )
-    }
-    return focus
-  }
-  const defaultAnchor = (v: CalendarView) =>
-    rangeStart
-      ? v === "month"
-        ? startOfMonth(rangeStart)
-        : v === "week" && spanDays > 7
-          ? startOfWeek(rangeStart, firstDay)
-          : rangeStart
-      : null
-  const anchor = userAnchor ?? defaultAnchor(view)
-
-  /** The days a period covers (for months: the month itself, not the grid). */
-  const periodDays = (v: CalendarView, a: string): [string, number] =>
-    v === "day" || v === "today"
-      ? [a, 1]
-      : v === "week"
-        ? [a, spanDays > 7 ? 7 : spanDays]
-        : v === "month"
-          ? [a, daysInMonth(a)]
-          : [rangeStart ?? a, spanDays]
-  const step = (v: CalendarView, a: string, dir: 1 | -1) =>
-    v === "month"
-      ? addMonths(a, dir)
-      : addDays(a, v === "day" || v === "today" ? dir : 7 * dir)
-  const hasItems = (v: CalendarView, a: string) =>
-    anyInDays(intervals, ...periodDays(v, a))
-  const periodLabel = (v: CalendarView, a: string) =>
-    v === "month"
-      ? formatDay(a, "month", locale)
-      : formatRangeLabel(...periodDays(v, a), locale)
-
-  const prevAnchor = anchor && view !== "agenda" ? step(view, anchor, -1) : null
-  const nextAnchor = anchor && view !== "agenda" ? step(view, anchor, 1) : null
-  const todayAnchor =
-    todayKey && view !== "agenda" ? anchorFor(view, todayKey) : null
-  const canPrev = !!prevAnchor && hasItems(view, prevAnchor)
-  const canNext = !!nextAnchor && hasItems(view, nextAnchor)
-  const canToday =
-    !!todayAnchor && todayAnchor !== anchor && hasItems(view, todayAnchor)
-  const unit = view === "day" ? "day" : view === "week" ? "week" : "month"
-
-  const rangeLabel = anchor ? periodLabel(view, anchor) : null
-  const visibleDays: string[] = !anchor
-    ? []
+  const gridDays =
+    view === "day" || view === "today"
+      ? 1
+      : Math.min(7, Math.max(1, Math.round(range?.days ?? 7)))
+  const days = rangeStart ? dayRange(rangeStart, gridDays) : []
+  const monthStart = rangeStart ? startOfMonth(rangeStart) : null
+  const periodLabel = !rangeStart
+    ? null
     : view === "month"
-      ? monthGrid(anchor, firstDay).flat()
-      : view === "agenda"
-        ? []
-        : dayRange(...periodDays(view, anchor))
-
-  const announce = (v: CalendarView, a: string | null) => {
-    if (!a) return
-    setAnnouncement(`${VIEW_LABELS[v]} view, ${periodLabel(v, a)}`)
-  }
-  const goTo = (a: string | null) => {
-    if (!a) return
-    setUserAnchor(a)
-    setSelected(null)
-    announce(view, a)
-  }
-  const switchView = (v: CalendarView) => {
-    const sel = items.find((i) => i.key === selected)
-    const focus =
-      sel?.iv.startKey ||
-      (todayKey && visibleDays.includes(todayKey) ? todayKey : null) ||
-      (anchor && view === "month" && rangeStart?.startsWith(anchor.slice(0, 7))
-        ? rangeStart
-        : anchor) ||
-      rangeStart
-    const a = focus ? (v === "agenda" ? rangeStart : anchorFor(v, focus)) : null
-    setUserView(v)
-    setUserAnchor(a)
-    announce(v, a)
-  }
+      ? formatDay(rangeStart, "month", locale)
+      : formatRangeLabel(rangeStart, gridDays, locale)
 
   /* Labels. */
   const timeText = (t: number) => formatTime(t, tz, locale)
-  const whenText = (iv: Interval, long = false) => {
-    if (iv.allDay) {
-      const last = addDays(iv.endKey, -1)
-      const style = long ? "long" : "weekday-long"
-      return last === iv.startKey
-        ? `${formatDay(iv.startKey, style, locale)}, all day`
-        : `${formatDay(iv.startKey, style, locale)} to ${formatDay(last, style, locale)}, all day`
-    }
-    const day = (t: number) =>
-      long
-        ? formatDay(dayKeyOf(t, tz), "long", locale)
-        : formatWeekdayAt(t, tz, "long", locale)
-    const sameDay = dayKeyOf(iv.start, tz) === dayKeyOf(iv.end, tz)
-    return sameDay
-      ? `${day(iv.start)} ${timeText(iv.start)} to ${timeText(iv.end)}`
-      : `${day(iv.start)} ${timeText(iv.start)} to ${day(iv.end)} ${timeText(iv.end)}`
-  }
-  const shortAt = (t: number) => `${formatWeekdayAt(t, tz, "short", locale)} ${timeText(t)}`
+  const shortAt = (t: number) =>
+    `${formatWeekdayAt(t, tz, "short", locale)} ${timeText(t)}`
   const itemLabel = (item: Item) => {
-    const parts = [item.title, whenText(item.iv)]
-    if (item.calendar) parts.push(`${item.calendar.label} calendar`)
-    if (item.state === "proposed") {
-      parts.push(
-        item.movedFrom !== undefined
-          ? `proposed move from ${formatWeekdayAt(item.movedFrom, tz, "long", locale)} ${timeText(item.movedFrom)}`
-          : "proposed",
-      )
-    }
-    if (item.state === "moving" && item.movedTo !== undefined) {
-      parts.push(
-        `proposed to move to ${formatWeekdayAt(item.movedTo, tz, "long", locale)} ${timeText(item.movedTo)}`,
-      )
-    }
-    if (item.state === "cancelling") parts.push("proposed to cancel")
-    if (item.state === "added") parts.push("added")
-    if (item.state === "moved") parts.push("moved")
-    if (!item.busy && item.state === "event") parts.push("free")
+    const { iv } = item
+    const when = iv.allDay
+      ? "all day"
+      : iv.end <= iv.start
+        ? timeText(iv.start)
+        : dayKeyOf(iv.start, tz) === dayKeyOf(iv.end - 1, tz)
+          ? `${timeText(iv.start)} to ${timeText(iv.end)}`
+          : `${shortAt(iv.start)} to ${shortAt(iv.end)}`
+    const parts = [item.title, when]
+    if (STATE_TEXT[item.state]) parts.push(STATE_TEXT[item.state] as string)
+    if (!item.busy && item.state === "event" && !iv.allDay) parts.push("free")
     if (item.conflicts.length) {
       parts.push(`conflicts with ${joinTitles(item.conflicts)}`)
     }
@@ -666,54 +404,10 @@ export function Calendar({
     return { verb: p.kind === "create" ? "Add" : "Cancel", name, when: span }
   }
 
-  /* Selection and details. */
-  const activeKey = selected
-  const activeItem = items.find((i) => i.key === activeKey) ?? null
-  // The card keeps its last event while it animates out.
-  const lastActive = React.useRef<Item | null>(null)
-  if (activeItem) lastActive.current = activeItem
-  const cardItem = activeItem ?? lastActive.current
-  // Switching from one event to another slides the card; the first open does not.
-  const [glide, setGlide] = React.useState(false)
-  const prevActive = React.useRef<string | null>(null)
-  React.useLayoutEffect(() => {
-    if (activeKey === null) setGlide(false)
-    else if (prevActive.current !== null && prevActive.current !== activeKey)
-      setGlide(true)
-    prevActive.current = activeKey
-  }, [activeKey])
-  const focusItem = (key: string) => {
-    const el = rootRef.current?.querySelector<HTMLElement>(
-      `[data-cal-key="${CSS.escape(key)}"]`,
-    )
-    el?.focus()
-  }
-  const closeDetails = () => {
-    const key = selected
-    setSelected(null)
-    if (key) requestAnimationFrame(() => focusItem(key))
-  }
-  const toggleItem = (key: string) =>
-    setSelected((prev) => (prev === key ? null : key))
-
-  const itemButtonProps = (item: Item) => ({
-    type: "button" as const,
-    "data-cal-key": item.key,
-    "aria-label": itemLabel(item),
-    "aria-expanded": selected === item.key,
-    "aria-controls": selected === item.key ? detailsId : undefined,
-    "aria-haspopup": "dialog" as const,
-    onClick: () => toggleItem(item.key),
-    onKeyDown: (e: React.KeyboardEvent<HTMLElement>) => {
-      if (e.key === "Escape" && selected === item.key) setSelected(null)
-    },
-  })
-
   /* Results. */
   const apply = () => {
     if (locked) return
     setDecision("applied")
-    setSelected(null)
     onResult?.({
       action: "apply",
       accepted: acceptedIds,
@@ -735,274 +429,96 @@ export function Calendar({
     onResult?.({ action: "dismiss" })
   }
 
-  /* Shared bits for the views. */
-  // The card follows the event that was clicked last: a new element re-anchors it.
-  const cardAnchor = cardItem
-    ? (rootRef.current?.querySelector<HTMLElement>(
-        `[data-cal-key="${CSS.escape(cardItem.key)}"]`,
-      ) ?? null)
-    : null
-  const detailsCard = (
-    <Popover.Root
-      open={activeItem !== null}
-      onOpenChange={(open, eventDetails) => {
-        if (open) return
-        // A press on an event button is handled by the button (it toggles).
-        const target = eventDetails.event?.target
-        if (target instanceof Element && target.closest("[data-cal-key]")) return
-        setSelected(null)
-      }}
-    >
-      <Popover.Portal>
-        <Popover.Positioner
-          anchor={cardAnchor}
-          side="top"
-          align="center"
-          sideOffset={12}
-          collisionPadding={8}
-          className={cn(
-            "isolate z-50 outline-none",
-            glide &&
-              "transition-transform duration-200 ease-out motion-reduce:transition-none",
-          )}
-        >
-          <Popover.Popup
-            id={detailsId}
-            aria-label={cardItem ? `Details: ${cardItem.title}` : undefined}
-            // Opened by a click, so focus moves into it; Esc returns to the event.
-            className="w-72 max-w-[calc(100vw-1rem)] origin-(--transform-origin) rounded-[10px] bg-popover p-3 text-popover-foreground shadow-md ring-1 ring-foreground/10 outline-none transition-[opacity,transform] duration-150 ease-out data-[ending-style]:translate-y-1 data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:translate-y-1 data-[starting-style]:scale-95 data-[starting-style]:opacity-0 motion-reduce:transition-none dark:shadow-none"
-          >
-            {cardItem && (
-              <Details
-                item={cardItem}
-                when={whenText(cardItem.iv, true)}
-                shortAt={shortAt}
-                onClose={closeDetails}
-              />
-            )}
-          </Popover.Popup>
-        </Popover.Positioner>
-      </Popover.Portal>
-    </Popover.Root>
-  )
-
-  const zoneLabel = formatTimeZoneLabel(
-    tz,
-    view === "agenda" || visibleDays.length === 0
-      ? dayRange(rangeStart ?? todayKey ?? "2000-01-01", spanDays)
-      : visibleDays,
-    locale,
-  )
-  const legend = calendarIndex.length > 1 ? calendarIndex : []
-  // Just the offset on screen ("GMT-4"); the full zone is its tooltip and sr text.
-  const zoneShort = zoneLabel.match(/\(([^)]+)\)/)?.[1] ?? zoneLabel
-  const showNav = view !== "agenda" && (canPrev || canNext || canToday)
-  const showSkeleton = streaming && readyEvents.length === 0
-
+  const skeleton = streaming && readyEvents.length === 0
   let body: React.ReactNode
-  if (view === "today") {
+  if (!rangeStart) {
     body = (
-      <TodayCard
-        day={anchor}
-        items={items}
-        tz={tz}
-        todayKey={todayKey}
-        nowT={nowT}
-        selected={selected}
-        itemButtonProps={itemButtonProps}
-        shortAt={shortAt}
-        skeleton={streaming && readyEvents.length === 0}
-        zoneLabel={zoneLabel}
-      />
-    )
-  } else if (!anchor && view !== "agenda") {
-    body = (
-      <div className="px-3 py-3">
+      <div className="px-3 pb-3">
         <Skeleton className="h-72 w-full rounded-[10px]" />
       </div>
     )
-  } else if (view === "month" && anchor) {
+  } else if (view === "today") {
     body = (
-      <MonthView
-        anchor={anchor}
-        firstDay={firstDay}
+      <TodayList
+        day={rangeStart}
         items={items}
+        todos={readyTodos}
+        tz={tz}
         todayKey={todayKey}
-        selected={selected}
-        expandedDays={expandedDays}
-        onExpand={(day) => setExpandedDays((prev) => new Set(prev).add(day))}
-        itemButtonProps={itemButtonProps}
-        timeText={timeText}
-        skeleton={showSkeleton}
+        nowT={nowT}
+        itemLabel={itemLabel}
+        skeleton={skeleton}
       />
     )
-  } else if (view === "agenda") {
+  } else if (view === "month" && monthStart) {
     body = (
-      <AgendaView
+      <MonthGrid
+        month={monthStart}
         items={items}
-        rangeStart={rangeStart}
-        spanDays={spanDays}
         todayKey={todayKey}
-        selected={selected}
-        itemButtonProps={itemButtonProps}
-        timeText={timeText}
-        shortAt={shortAt}
-        skeleton={showSkeleton}
-        heightClass="max-h-96"
+        timeText={(t) => formatTimeShort(t, tz, locale)}
+        itemLabel={itemLabel}
+        skeleton={skeleton}
       />
     )
   } else {
     body = (
       <TimeGrid
-        days={visibleDays}
+        days={days}
         items={items}
         tz={tz}
         todayKey={todayKey}
-        nowT={nowT}
         workingHours={workingHours}
-        selected={selected}
-        itemButtonProps={itemButtonProps}
         timeText={timeText}
-        skeleton={showSkeleton}
-        dayView={view === "day"}
-        heightClass={hasProposals ? "max-h-[21rem]" : "max-h-[25rem]"}
+        itemLabel={itemLabel}
+        skeleton={skeleton}
       />
     )
   }
 
+  const multiple = readyProposals.length > 1
   const acceptedCount = acceptedIds.length
   const declinedCount = readyProposals.length - acceptedCount
   const showFooter = hasProposals || (result !== undefined && !streaming)
+  const zone = `Times in ${tz.replace(/_/g, " ")}.`
 
   return (
     <MotionConfig reducedMotion="user">
       <Surface
-        ref={rootRef}
         data-slot="calendar"
         data-status={status}
         data-view={view}
         aria-busy={streaming || status === "submitting"}
         aria-labelledby={titleId}
-        className={cn("@container", CAL_VARS, className)}
+        className={cn("@container", className)}
       >
         {view === "today" ? (
-          // The compact card is its own header: the date is the big number.
+          // The list carries its own date line; the title is for screen readers.
           <h3 id={titleId} className="sr-only">
-            {title ?? rangeLabel ?? "Today"}
+            {title ?? periodLabel ?? "Today"}. {zone}
           </h3>
         ) : (
-          <SurfaceHeader className="gap-2 border-b border-border pb-3">
-            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-              <div className="flex min-w-0 flex-col gap-0.5">
-                <SurfaceTitle id={titleId}>{title ?? rangeLabel}</SurfaceTitle>
-                {streaming ? (
-                  <ShimmeringText
-                    text="Loading your calendar…"
-                    color="var(--muted-foreground)"
-                    shimmeringColor="var(--foreground)"
-                    className="text-[13px]"
-                  />
-                ) : (
-                  <div
-                    className={cn(
-                      genuiType.meta,
-                      "flex flex-wrap items-center gap-x-3 gap-y-0.5",
-                    )}
-                  >
-                    <p>
-                      {title && rangeLabel && <>{rangeLabel} · </>}
-                      <span title={zoneLabel}>
-                        <span className="sr-only">Times in {zoneLabel}</span>
-                        <span aria-hidden>{zoneShort}</span>
-                      </span>
-                    </p>
-                    {/* The markers can't be read without it, so the legend stays, beside the zone. */}
-                    {legend.length > 0 && (
-                      <ul
-                        aria-label="Calendars"
-                        className="flex flex-wrap gap-x-3"
-                      >
-                        {legend.map((c, i) => (
-                          <li
-                            key={c.id ?? c.label}
-                            className="flex items-center gap-1.5"
-                          >
-                            <Marker index={i} />
-                            {c.label}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                )}
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                {/* Compact in the title row, like the other header switches: a row
-                    of its own made the card 54px taller. */}
-                {options.length > 1 && (
-                  <Segmented
-                    label="View"
-                    value={view}
-                    options={options.map((v) => ({ value: v, label: VIEW_LABELS[v] }))}
-                    onChange={(v) => v !== view && switchView(v)}
-                    fit
-                  />
-                )}
-                {showNav && (
-                  <div className="flex items-center gap-1">
-                    <WhyDisabled when={!canToday} reason="Already showing today">
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        disabled={!canToday}
-                        onClick={() => goTo(todayAnchor)}
-                      >
-                        Today
-                      </Button>
-                    </WhyDisabled>
-                    <WhyDisabled
-                      reason={!canPrev ? "Nothing earlier" : undefined}
-                    >
-                      <IconTip label={`Previous ${unit}`}>
-                        <Button
-                          size="icon-sm"
-                          variant="ghost"
-                          aria-label={`Previous ${unit}`}
-                          disabled={!canPrev}
-                          onClick={() => goTo(prevAnchor)}
-                        >
-                          <ChevronLeftIcon />
-                        </Button>
-                      </IconTip>
-                    </WhyDisabled>
-                    <WhyDisabled
-                      reason={!canNext ? "Nothing later" : undefined}
-                    >
-                      <IconTip label={`Next ${unit}`}>
-                        <Button
-                          size="icon-sm"
-                          variant="ghost"
-                          aria-label={`Next ${unit}`}
-                          disabled={!canNext}
-                          onClick={() => goTo(nextAnchor)}
-                        >
-                          <ChevronRightIcon />
-                        </Button>
-                      </IconTip>
-                    </WhyDisabled>
-                  </div>
-                )}
-              </div>
-            </div>
-            <p aria-live="polite" className="sr-only">
-              {announcement}
-            </p>
+          <SurfaceHeader className="pb-2">
+            <SurfaceTitle id={titleId}>
+              {title ?? periodLabel}
+              {title && periodLabel && (
+                <span className="sr-only">, {periodLabel}</span>
+              )}
+              <span className="sr-only">. {zone}</span>
+            </SurfaceTitle>
+            {streaming && (
+              <ShimmeringText
+                text="Loading your calendar…"
+                color="var(--muted-foreground)"
+                shimmeringColor="var(--foreground)"
+                className="text-[13px]"
+              />
+            )}
           </SurfaceHeader>
         )}
 
         <AutoHeight>
           {body}
-          {detailsCard}
 
           {hasProposals && (
             <section
@@ -1011,9 +527,9 @@ export function Calendar({
             >
               <h4
                 id={`${baseId}-proposals`}
-                className={cn(genuiType.label, "px-3")}
+                className={cn(genuiType.label, "px-3 pt-1")}
               >
-                Proposed changes
+                {multiple ? "Proposed changes" : "Proposed change"}
               </h4>
               <ul className="flex flex-col">
                 {readyProposals.map((p) => {
@@ -1022,94 +538,77 @@ export function Calendar({
                   const conflictTitles =
                     items.find((i) => i.key === `p:${p.id}`)?.conflicts ?? []
                   const text = `${s.verb} ${s.name}`
+                  const meta = [s.when, p.reason].filter(Boolean).join(" · ")
+                  const choosable = multiple && status !== "applied"
+                  const Row = choosable ? "label" : "div"
                   return (
                     <motion.li
                       key={p.id}
                       initial={{ opacity: 0, y: 4 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={genuiMotion.fade}
-                      className="flex flex-col gap-2 px-3 py-1.5 @md:flex-row @md:items-center @md:gap-4"
                     >
-                      <div
+                      <Row
                         className={cn(
-                          "flex min-w-0 flex-1 flex-col gap-1",
-                          !accepted && "text-muted-foreground",
+                          "flex items-start gap-3 px-3 py-1.5",
+                          choosable && !locked && "cursor-pointer",
                         )}
                       >
-                        <p className="text-[13px]">
+                        {choosable && (
+                          <Checkbox
+                            nativeButton
+                            size="sm"
+                            aria-label={`Include: ${text}`}
+                            checked={accepted}
+                            disabled={locked}
+                            onCheckedChange={(checked) =>
+                              setDeclined((prev) => {
+                                const next = new Set(prev)
+                                if (checked) next.delete(p.id)
+                                else next.add(p.id)
+                                return next
+                              })
+                            }
+                            // Larger tap area than the 18px box, without changing its look.
+                            className="relative mt-px after:absolute after:-inset-2"
+                          />
+                        )}
+                        <span
+                          className={cn(
+                            "flex min-w-0 flex-1 flex-col gap-0.5",
+                            !accepted && "text-muted-foreground",
+                          )}
+                        >
                           <span
                             className={cn(
-                              "font-semibold",
+                              "text-[13px] font-semibold",
                               !accepted &&
                                 "line-through decoration-muted-foreground/60",
                             )}
                           >
                             {text}
                           </span>
-                          {s.when && (
-                            <span className="text-muted-foreground tabular-nums">
-                              {" "}
-                              · {s.when}
+                          {meta && (
+                            <span className={cn(genuiType.meta, "tabular-nums")}>
+                              {meta}
                             </span>
                           )}
-                        </p>
-                        {/* The reason lives in the event's details, one click away. */}
-                        {p.reason && (
-                          <span className="sr-only">{p.reason}</span>
-                        )}
-                        {accepted && conflictTitles.length > 0 && (
-                          <p className="flex items-start gap-1.5 text-[13px]">
-                            <AlertTriangleIcon
-                              aria-hidden
-                              className="mt-px size-3.5 shrink-0"
-                            />
-                            Conflicts with {joinTitles(conflictTitles)}
-                          </p>
-                        )}
-                      </div>
-                      {status === "applied" ? (
-                        <span className="text-[13px] text-muted-foreground @md:pt-0.5">
-                          {accepted ? "Accepted" : "Declined"}
+                          {accepted && conflictTitles.length > 0 && (
+                            <span className="flex items-start gap-1.5 text-[13px]">
+                              <AlertTriangleIcon
+                                aria-hidden
+                                className="mt-[3px] size-3.5 shrink-0"
+                              />
+                              Conflicts with {joinTitles(conflictTitles)}
+                            </span>
+                          )}
                         </span>
-                      ) : (
-                        <fieldset className="inline-flex shrink-0 self-start rounded-full border border-border bg-transparent p-1 @md:self-auto">
-                          <legend className="sr-only">{`${text} ${s.when}`}</legend>
-                          {(["accept", "decline"] as const).map((choice) => {
-                            const pressed =
-                              choice === "accept" ? accepted : !accepted
-                            return (
-                              <button
-                                key={choice}
-                                type="button"
-                                aria-pressed={pressed}
-                                aria-label={`${choice === "accept" ? "Accept" : "Decline"}: ${text}`}
-                                disabled={locked}
-                                onClick={() =>
-                                  setDeclined((prev) => {
-                                    const next = new Set(prev)
-                                    if (choice === "accept") next.delete(p.id)
-                                    else next.add(p.id)
-                                    return next
-                                  })
-                                }
-                                className={cn(
-                                  "relative inline-flex h-8 items-center gap-1.5 rounded-full px-3.5 text-[13px] font-medium text-muted-foreground transition-colors outline-none after:absolute after:inset-x-0 after:-inset-y-1.5",
-                                  "hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50",
-                                  "disabled:pointer-events-none disabled:opacity-60",
-                                  "aria-pressed:bg-accent aria-pressed:text-foreground",
-                                )}
-                              >
-                                {choice === "accept" ? (
-                                  <CheckIcon aria-hidden className="size-3.5" />
-                                ) : (
-                                  <XIcon aria-hidden className="size-3.5" />
-                                )}
-                                {choice === "accept" ? "Accept" : "Decline"}
-                              </button>
-                            )
-                          })}
-                        </fieldset>
-                      )}
+                        {status === "applied" && (
+                          <span className={cn(genuiType.meta, "shrink-0")}>
+                            {accepted ? "Accepted" : "Declined"}
+                          </span>
+                        )}
+                      </Row>
                     </motion.li>
                   )
                 })}
@@ -1126,7 +625,7 @@ export function Calendar({
             {status === "applied" ? (
               <p className="flex items-center gap-1.5 text-[13px]">
                 <CheckIcon aria-hidden className="size-4 shrink-0" />
-                Approved {acceptedCount}{" "}
+                Applied {acceptedCount}{" "}
                 {acceptedCount === 1 ? "change" : "changes"}
                 {declinedCount > 0 && `, declined ${declinedCount}`}
               </p>
@@ -1171,7 +670,10 @@ export function Calendar({
                   >
                     Cancel
                   </Button>
-                  <WhyDisabled when={!feedback.trim()} reason="Write what should change">
+                  <WhyDisabled
+                    when={!feedback.trim()}
+                    reason="Write what should change"
+                  >
                     <Button
                       size="sm"
                       onClick={requestChanges}
@@ -1233,7 +735,9 @@ export function Calendar({
                     >
                       {status === "submitting"
                         ? "Applying…"
-                        : `Apply ${acceptedCount} ${acceptedCount === 1 ? "change" : "changes"}`}
+                        : multiple
+                          ? `Apply ${acceptedCount} ${acceptedCount === 1 ? "change" : "changes"}`
+                          : "Apply"}
                     </Button>
                   </WhyDisabled>
                 </div>
@@ -1247,230 +751,13 @@ export function Calendar({
 }
 
 /* ------------------------------------------------------------------------ */
-/* Pieces                                                                   */
+/* Views                                                                    */
 /* ------------------------------------------------------------------------ */
 
-type ItemButtonProps = (item: Item) => {
-  type: "button"
-  "data-cal-key": string
-  "aria-label": string
-  "aria-expanded": boolean
-  "aria-controls": string | undefined
-  "aria-haspopup": "dialog"
-  onClick: () => void
-  onKeyDown: (e: React.KeyboardEvent<HTMLElement>) => void
-}
-
-const struck = (item: Item) =>
-  item.state === "moving" || item.state === "cancelling"
-
-/** Visual treatment per state. Text labels carry the meaning; style backs it up. */
-function itemClasses(item: Item, selected: boolean) {
-  return cn(
-    "rounded-[10px] border text-left outline-none transition-colors",
-    "focus-visible:ring-2 focus-visible:ring-ring/50",
-    item.state === "proposed"
-      ? "border-dashed border-foreground/50 bg-transparent hover:bg-foreground/5"
-      : struck(item)
-        ? "border-transparent bg-transparent text-muted-foreground opacity-70 hover:opacity-100"
-        : item.busy
-          ? `border-transparent ${CAL_FILL}`
-          : "border-border bg-transparent hover:bg-foreground/5",
-    selected && "ring-2 ring-ring",
-  )
-}
-
-/** One-word state tag for blocks too short for the full notes. */
-const COMPACT_TAGS: Partial<Record<ItemState, string>> = {
-  proposed: "Proposed",
-  cancelling: "Cancel",
-  added: "Added",
-  moved: "Moved",
-}
-
-function ItemTitle({
-  item,
-  className,
-  compact = false,
-  wrap = false,
-  onFill = false,
-}: {
-  item: Item
-  className?: string
-  /** Short block: show the state as a tag after the title. */
-  compact?: boolean
-  /** A narrow (overlapping) block: two title lines, no calendar marker (it is in the details). */
-  wrap?: boolean
-  /** The title sits on its calendar's own fill. */
-  onFill?: boolean
-}) {
-  const tag = compact ? COMPACT_TAGS[item.state] : undefined
-  return (
-    <span
-      className={cn(
-        "flex min-w-0 gap-1.5 font-medium",
-        wrap ? "items-start" : "items-center",
-        className,
-      )}
-    >
-      {item.calendar && !wrap && (
-        <Marker index={item.calendar.index} onFill={onFill} />
-      )}
-      {item.conflicts.length > 0 && (
-        <AlertTriangleIcon
-          aria-hidden
-          className={cn("size-3 shrink-0", wrap && "mt-[3px]")}
-        />
-      )}
-      <span
-        className={cn(
-          wrap ? "line-clamp-2 break-words" : "truncate",
-          struck(item) && "line-through decoration-muted-foreground/70",
-        )}
-      >
-        {item.title}
-      </span>
-      {compact && item.state === "proposed" && item.movedFrom !== undefined && (
-        <ArrowRightIcon aria-hidden className="size-3 shrink-0" />
-      )}
-      {tag && (
-        <span className="shrink-0 font-normal text-muted-foreground">
-          {tag}
-        </span>
-      )}
-    </span>
-  )
-}
-
-/** The short text labels under a title: Proposed, Moved to…, Conflicts with… */
-function ItemNotes({ item }: { item: Item }) {
-  // One note per block, the one that matters most: a conflict, then the state.
-  // The full set is in the button's label and the details panel.
-  const note: React.ReactNode = item.conflicts.length ? (
-    <span className="text-foreground">
-      Conflicts with {joinTitles(item.conflicts)}
-    </span>
-  ) : item.state === "proposed" ? (
-    item.movedFrom !== undefined ? (
-      <span className="flex items-center gap-1">
-        <ArrowRightIcon aria-hidden className="size-3 shrink-0" />
-        Moved here
-      </span>
-    ) : (
-      <span>Proposed</span>
-    )
-  ) : item.state === "cancelling" ? (
-    <span>Cancel proposed</span>
-  ) : item.state === "added" ? (
-    <span>Added</span>
-  ) : item.state === "moved" ? (
-    <span>Moved</span>
-  ) : null
-  if (!note) return null
-  return (
-    <span className="flex min-w-0 flex-col text-[13px] leading-tight text-muted-foreground [&>span]:truncate">
-      {note}
-    </span>
-  )
-}
-
-function Details({
-  item,
-  when,
-  shortAt,
-  onClose,
-}: {
-  item: Item
-  when: string
-  shortAt: (t: number) => string
-  onClose: () => void
-}) {
-  const href = safeHref(item.url)
-  const stateText: Partial<Record<ItemState, string>> = {
-    proposed: "Proposed",
-    moving: "Move proposed",
-    cancelling: "Cancel proposed",
-    added: "Added",
-    moved: "Moved",
-  }
-  const rows: [string, React.ReactNode][] = []
-  if (item.calendar) rows.push(["Calendar", item.calendar.label])
-  if (item.location) rows.push(["Location", item.location])
-  if (item.attendees !== undefined) {
-    rows.push([
-      "Attendees",
-      `${item.attendees} ${item.attendees === 1 ? "person" : "people"}`,
-    ])
-  }
-  if (!item.busy && item.state === "event") rows.push(["Shown as", "Free"])
-  if (item.state === "proposed" && item.movedFrom !== undefined) {
-    rows.push(["Currently", shortAt(item.movedFrom)])
-  }
-  if (item.state === "moving" && item.movedTo !== undefined) {
-    rows.push(["Moving to", shortAt(item.movedTo)])
-  }
-  if (item.state === "moved" && item.movedFrom !== undefined) {
-    rows.push(["Was", shortAt(item.movedFrom)])
-  }
-
-  return (
-    <div className="flex flex-col gap-2">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 flex-col gap-0.5">
-          <p className="text-[13px] font-semibold">
-            {item.title}
-            {stateText[item.state] && (
-              <span className="font-normal text-muted-foreground">
-                {" "}
-                · {stateText[item.state]}
-              </span>
-            )}
-          </p>
-          <p className={genuiType.meta}>{when}</p>
-        </div>
-        <IconTip label="Close details">
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            aria-label="Close details"
-            onClick={onClose}
-            className="-mt-1.5 -mr-1.5"
-          >
-            <XIcon />
-          </Button>
-        </IconTip>
-      </div>
-      {rows.length > 0 && (
-        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[13px]">
-          {rows.map(([label, value]) => (
-            <React.Fragment key={label}>
-              <dt className="text-muted-foreground">{label}</dt>
-              <dd className="min-w-0 break-words">{value}</dd>
-            </React.Fragment>
-          ))}
-        </dl>
-      )}
-      {item.reason && <p className="text-[13px]">{item.reason}</p>}
-      {item.conflicts.length > 0 && (
-        <p className="flex items-start gap-1.5 text-[13px]">
-          <AlertTriangleIcon aria-hidden className="mt-px size-3.5 shrink-0" />
-          Conflicts with {joinTitles(item.conflicts)}
-        </p>
-      )}
-      {href && (
-        <a
-          href={href}
-          target="_blank"
-          rel="noopener noreferrer nofollow"
-          className="inline-flex w-fit items-center gap-1 rounded-sm text-[13px] font-medium underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/50"
-        >
-          Open
-          <ExternalLinkIcon aria-hidden className="size-3" />
-          <span className="sr-only"> {item.title} (opens in a new tab)</span>
-        </a>
-      )}
-    </div>
-  )
+const fadeIn = {
+  initial: { opacity: 0, y: 4 },
+  animate: { opacity: 1, y: 0 },
+  transition: genuiMotion.fade,
 }
 
 /* Week and day ------------------------------------------------------------ */
@@ -1480,945 +767,540 @@ function TimeGrid({
   items,
   tz,
   todayKey,
-  nowT,
   workingHours,
-  selected,
-  itemButtonProps,
   timeText,
+  itemLabel,
   skeleton,
-  dayView,
-  heightClass,
 }: {
   days: string[]
   items: Item[]
   tz: string
   todayKey: string | null
-  nowT: number | null
   workingHours?: { start?: string; end?: string }
-  selected: string | null
-  itemButtonProps: ItemButtonProps
   timeText: (t: number) => string
+  itemLabel: (item: Item) => string
   skeleton: boolean
-  dayView: boolean
-  /** Max height of the scrolling hours (a Tailwind `max-h-*` class). */
-  heightClass: string
 }) {
   const locale = useGenUILocale()
   const workStart = parseHHmm(workingHours?.start) ?? 9 * 60
-  const workEndRaw = parseHHmm(workingHours?.end) ?? 18 * 60
-  const workEnd = workEndRaw > workStart ? workEndRaw : 18 * 60
+  const workEndRaw = parseHHmm(workingHours?.end) ?? 17 * 60
+  const workEnd = workEndRaw > workStart ? workEndRaw : 17 * 60
 
   const columns = days.map((day) => {
-    const allDay = items.filter(
-      (i) =>
-        i.iv.allDay &&
-        diffDays(i.iv.startKey, day) >= 0 &&
-        diffDays(day, i.iv.endKey) > 0,
-    )
+    const allDay = items.filter((i) => i.iv.allDay && onDay(i, day))
     const timed = items.flatMap((item) => {
       if (item.iv.allDay) return []
       const seg = segmentOnDay(item.iv, day, tz)
-      if (!seg) return []
-      return [
-        {
-          item,
-          ...seg,
-          // Only the first visible piece of a multi-day event is a button.
-          primary: item.iv.startKey === day || day === days[0],
-        },
-      ]
+      return seg ? [{ item, ...seg }] : []
     })
     const layout = layoutColumns(
-      timed.map((s) => ({
-        key: s.item.key,
-        startMin: s.startMin,
-        endMin: s.endMin,
-      })),
+      timed.map((s) => ({ key: s.item.key, startMin: s.startMin, endMin: s.endMin })),
     )
     return { day, allDay, timed, layout }
   })
 
-  let gridStart = Math.max(0, Math.floor(workStart / 60) * 60 - 60)
-  let gridEnd = Math.min(1440, Math.ceil(workEnd / 60) * 60 + 60)
+  // Working hours, grown to fit every event.
+  let gridStart = Math.floor(workStart / 60) * 60
+  let gridEnd = Math.ceil(workEnd / 60) * 60
   for (const c of columns) {
     for (const s of c.timed) {
       gridStart = Math.min(gridStart, Math.floor(s.startMin / 60) * 60)
       gridEnd = Math.max(gridEnd, Math.ceil(s.endMin / 60) * 60)
     }
   }
-  const hours = (gridEnd - gridStart) / 60
-  const hourList = Array.from({ length: hours }, (_, i) => gridStart / 60 + i)
-  const height = hours * HOUR_PX
-  const y = (min: number) => ((min - gridStart) / 60) * HOUR_PX
+  const hours = Math.max(1, (gridEnd - gridStart) / 60)
+  // A long day gets shorter hours, so the card never needs an inner scroll.
+  const hourPx = hours > 12 ? 28 : 44
+  const height = hours * hourPx
+  /** Every hour line, top to bottom, as hours of the day. */
+  const hourLines = Array.from({ length: hours + 1 }, (_, i) => gridStart / 60 + i)
+  const y = (min: number) => ((min - gridStart) / 60) * hourPx
   const hasAllDay = columns.some((c) => c.allDay.length > 0)
-  const nowKey = nowT !== null ? dayKeyOf(nowT, tz) : null
-  const nowMin = nowT !== null ? minutesOfDay(nowT, tz) : null
-
-  // The hours scroll inside the card. Open on what matters: the earliest
-  // change under review, else the current time, else the start of the day.
-  const changed = columns.flatMap((c) =>
-    c.timed.filter((s) => s.item.state !== "event").map((s) => s.startMin),
-  )
-  const focusMin =
-    changed.length > 0
-      ? Math.min(...changed) - 15
-      : nowKey !== null && days.includes(nowKey) && nowMin !== null
-        ? Math.floor((nowMin - 60) / 60) * 60
-        : workStart
-  const focusTop = Math.max(0, Math.round(y(focusMin)))
-  const scrollRef = React.useRef<HTMLElement>(null)
-  const userScrolled = React.useRef(false)
-  React.useEffect(() => {
-    const el = scrollRef.current
-    if (el && !userScrolled.current) el.scrollTop = focusTop
-  }, [focusTop])
-  const stopFollowing = () => {
-    userScrolled.current = true
-  }
+  const many = days.length > 1
 
   return (
-    <section
-      ref={scrollRef}
-      aria-label={dayView ? "Day schedule" : "Week schedule"}
-      // biome-ignore lint/a11y/noNoninteractiveTabindex: a scrollable region must be reachable by keyboard to scroll it
-      tabIndex={0}
-      onWheel={stopFollowing}
-      onTouchStart={stopFollowing}
-      onKeyDown={stopFollowing}
-      onPointerDown={stopFollowing}
-      className={cn(
-        "overflow-y-auto overscroll-auto pb-3 outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset",
-        "[mask-image:linear-gradient(to_bottom,#000_calc(100%-1rem),transparent)]",
-        heightClass,
-      )}
+    <ScrollFade
+      label={many ? "Week schedule" : "Day schedule"}
+      viewportClassName="overflow-x-auto overscroll-x-contain px-3 pt-2 pb-4"
     >
       <div
-        className="grid"
+        className="grid gap-x-1.5"
         style={{
-          gridTemplateColumns: `4.5rem repeat(${days.length}, minmax(0, 1fr))`,
+          gridTemplateColumns: `2.25rem repeat(${days.length}, minmax(${many ? "4.5rem" : "0"}, 1fr))`,
         }}
       >
-        <div
-          aria-hidden
-          className="sticky top-0 z-20 h-12 border-b bg-[var(--surface-bg)]"
-          style={{ gridColumn: 1, gridRow: 1 }}
-        />
-        {hasAllDay && (
+        {columns.map(({ day }, index) => (
           <div
-            className="sticky top-12 z-20 border-b bg-[var(--surface-bg)] px-1 py-1.5 text-right text-[13px] leading-tight text-muted-foreground"
-            style={{ gridColumn: 1, gridRow: 2 }}
+            key={day}
+            aria-hidden
+            className={cn(
+              SCHEDULE_LABEL,
+              "truncate px-0.5 pb-3",
+              day === todayKey ? "text-foreground" : "text-muted-foreground",
+            )}
+            style={{ gridColumn: index + 2, gridRow: 1 }}
           >
-            All day
+            {formatDay(day, "weekday", locale)} {formatDay(day, "day", locale)}
           </div>
-        )}
+        ))}
+
+        {hasAllDay &&
+          columns.map(({ day, allDay }, index) => (
+            <div
+              key={day}
+              aria-hidden
+              className="flex min-w-0 flex-col gap-1 pb-2"
+              style={{ gridColumn: index + 2, gridRow: 2 }}
+            >
+              {allDay.map((item) => (
+                <motion.span
+                  key={item.key}
+                  {...fadeIn}
+                  className={cn(
+                    "flex h-6 min-w-0 items-center rounded-full px-2.5 text-[13px]",
+                    itemTone(item),
+                  )}
+                >
+                  <span className={cn("truncate", isStruck(item) && "line-through")}>
+                    {item.title}
+                  </span>
+                </motion.span>
+              ))}
+            </div>
+          ))}
+
+        {/* Hour labels and lines: decoration only. */}
         <div
           aria-hidden
           className="relative"
           style={{ gridColumn: 1, gridRow: 3, height }}
         >
-          {hourList.map((hour) => (
+          {hourLines.slice(0, -1).map((hour) => (
             <span
               key={hour}
-              className="absolute right-1.5 text-[13px] leading-none text-muted-foreground tabular-nums"
-              style={{ top: (hour - gridStart / 60) * HOUR_PX + 3 }}
+              className={cn(
+                SCHEDULE_LABEL,
+                "absolute left-0 -translate-y-1/2 text-muted-foreground",
+              )}
+              style={{ top: y(hour * 60) }}
             >
               {formatHour(hour, locale)}
             </span>
           ))}
-          {/* The current time, pinned in the gutter on the line below. */}
-          {nowT !== null &&
-            nowKey !== null &&
-            days.includes(nowKey) &&
-            nowMin !== null &&
-            nowMin >= gridStart &&
-            nowMin <= gridEnd && (
-              <span
-                className="absolute right-1 z-10 -translate-y-1/2 rounded-full bg-foreground px-1.5 py-0.5 text-[13px] leading-none font-medium whitespace-nowrap text-background tabular-nums"
-                style={{ top: y(nowMin) }}
-              >
-                {timeText(nowT)}
-              </span>
-            )}
+        </div>
+        <div
+          aria-hidden
+          className="pointer-events-none relative"
+          style={{ gridColumn: "2 / -1", gridRow: 3, height }}
+        >
+          {hourLines.map((hour) => (
+            <div
+              key={hour}
+              className="absolute inset-x-0 border-t border-border/70"
+              style={{ top: y(hour * 60) }}
+            />
+          ))}
         </div>
 
-        {columns.map(({ day, allDay, timed, layout }, index) => {
-          const isToday = day === todayKey
-          return (
-            <React.Fragment key={day}>
-              <div
-                className="sticky top-0 z-20 flex h-12 items-center justify-center border-b bg-[var(--surface-bg)] px-0.5"
-                style={{ gridColumn: index + 2, gridRow: 1 }}
-              >
-                <div
+        {columns.map(({ day, allDay, timed, layout }, index) => (
+          <div
+            key={day}
+            className="relative min-w-0"
+            style={{ gridColumn: index + 2, gridRow: 3, height }}
+          >
+            <h4 className="sr-only">
+              {formatDay(day, "long", locale)}
+              {day === todayKey && ", today"}
+            </h4>
+            {allDay.length + timed.length === 0 && !skeleton && (
+              <p className="sr-only">Nothing scheduled</p>
+            )}
+            {allDay.map((item) => (
+              <p key={item.key} className="sr-only">
+                {itemLabel(item)}
+              </p>
+            ))}
+            {timed.map(({ item, startMin, endMin }) => {
+              const pos = layout.get(item.key) ?? { col: 0, cols: 1 }
+              const h = Math.max(((endMin - startMin) / 60) * hourPx - 4, 6)
+              const changed = isChanged(item)
+              const showText = h >= 18 && item.state !== "moving"
+              return (
+                <motion.div
+                  key={item.key}
+                  {...fadeIn}
                   className={cn(
-                    "flex size-full flex-col items-center justify-center gap-0.5 rounded-[10px]",
-                    isToday && "bg-foreground text-background",
+                    "absolute overflow-hidden rounded-[8px]",
+                    itemTone(item),
                   )}
+                  style={{
+                    top: y(startMin) + 2,
+                    height: h,
+                    left: `calc(${(pos.col / pos.cols) * 100}% + ${pos.col ? 2 : 0}px)`,
+                    width: `calc(${100 / pos.cols}% - ${pos.cols > 1 ? 2 : 0}px)`,
+                    zIndex: changed ? 2 : 1,
+                  }}
                 >
-                  <span
-                    className={cn(
-                      "text-[13px] leading-none",
-                      !isToday && "text-muted-foreground",
-                    )}
-                  >
-                    {formatDay(
-                      day,
-                      dayView ? "weekday-long" : "weekday",
-                      locale,
-                    )}
-                  </span>
-                  <span className="font-figure text-[24px] leading-none font-normal tabular-nums">
-                    {formatDay(day, "day", locale)}
-                  </span>
-                  {isToday && <span className="sr-only">, today</span>}
-                </div>
-              </div>
-
-              {hasAllDay && (
-                <div
-                  className="sticky top-12 z-20 flex min-w-0 flex-col gap-0.5 border-b bg-[var(--surface-bg)] p-0.5"
-                  style={{ gridColumn: index + 2, gridRow: 2 }}
-                >
-                  {allDay.map((item) =>
-                    item.iv.startKey === day || day === days[0] ? (
-                      <motion.button
-                        key={item.key}
-                        {...itemButtonProps(item)}
-                        initial={{ opacity: 0, y: 4 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={genuiMotion.fade}
-                        style={calStyle(item)}
+                  {showText && (
+                    <span
+                      aria-hidden
+                      className={cn(
+                        "flex min-w-0 flex-wrap items-baseline gap-x-2 px-2 text-[13px] leading-[18px]",
+                        h >= 28 ? "py-1.5" : "py-px",
+                        changed && "font-semibold",
+                      )}
+                    >
+                      <span
                         className={cn(
-                          itemClasses(item, selected === item.key),
-                          "flex h-6 min-w-0 items-center px-1.5 text-[13px]",
+                          "min-w-0 truncate",
+                          item.state === "cancelling" && "line-through",
                         )}
                       >
-                        <ItemTitle item={item} onFill={isFilled(item)} />
-                      </motion.button>
-                    ) : (
-                      // Continuation of a multi-day event; the first day's button covers it.
-                      <div
-                        key={item.key}
-                        aria-hidden
-                        className="flex h-6 min-w-0 items-center rounded-md border border-border bg-transparent px-1.5 text-[13px] text-muted-foreground"
-                      >
-                        <span className="truncate">{item.title}</span>
-                      </div>
-                    ),
-                  )}
-                </div>
-              )}
-
-              <div
-                className="relative"
-                style={{ gridColumn: index + 2, gridRow: 3, height }}
-              >
-                {/* Hour lines and out-of-hours shading: decoration only. */}
-                <div
-                  aria-hidden
-                  className="pointer-events-none absolute inset-0"
-                >
-                  {hourList.slice(1).map((hour) => (
-                    <div
-                      key={hour}
-                      className="absolute inset-x-0 border-t border-border/60"
-                      style={{ top: (hour - gridStart / 60) * HOUR_PX }}
-                    />
-                  ))}
-                </div>
-
-                {timed.map(({ item, startMin, endMin, primary }) => {
-                  const pos = layout.get(item.key) ?? { col: 0, cols: 1 }
-                  const top = y(startMin)
-                  const h = Math.max(((endMin - startMin) / 60) * HOUR_PX, 24)
-                  const style: React.CSSProperties = {
-                    top,
-                    height: h,
-                    left: `calc(${(pos.col / pos.cols) * 100}% + 1px)`,
-                    width: `calc(${100 / pos.cols}% - 2px)`,
-                    zIndex: item.state === "proposed" ? 2 : 1,
-                  }
-                  const compact = h < 36
-                  const content = (
-                    <>
-                      <ItemTitle
-                        item={item}
-                        compact={compact}
-                        wrap={!compact && pos.cols > 1}
-                        onFill={isFilled(item)}
-                        className="text-[13px] leading-tight"
-                      />
-                      {!compact && pos.cols === 1 && (
-                        <span className="truncate text-[13px] leading-tight text-muted-foreground tabular-nums">
-                          {timeText(item.iv.start)}–{timeText(item.iv.end)}
-                        </span>
-                      )}
-                      {!compact && <ItemNotes item={item} />}
-                    </>
-                  )
-                  return primary ? (
-                    <motion.button
-                      key={item.key}
-                      {...itemButtonProps(item)}
-                      initial={{ opacity: 0, y: 4 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={genuiMotion.fade}
-                      style={{ ...style, ...calStyle(item) }}
-                      className={cn(
-                        itemClasses(item, selected === item.key),
-                        "absolute flex flex-col gap-0.5 overflow-hidden py-1",
-                        pos.cols > 1 ? "px-1" : "px-2",
-                      )}
-                    >
-                      {content}
-                    </motion.button>
-                  ) : (
-                    <div
-                      key={item.key}
-                      aria-hidden
-                      style={style}
-                      className="absolute flex flex-col gap-0.5 overflow-hidden rounded-[10px] border bg-transparent px-1.5 py-1"
-                    >
-                      {content}
-                    </div>
-                  )
-                })}
-
-                {skeleton && index % 2 === 0 && (
-                  <Skeleton
-                    className="absolute inset-x-1 rounded-md"
-                    style={{
-                      top: HOUR_PX * (1 + (index % 3)),
-                      height: HOUR_PX,
-                    }}
-                  />
-                )}
-
-                {day === nowKey &&
-                  nowMin !== null &&
-                  nowMin >= gridStart &&
-                  nowMin <= gridEnd && (
-                    <div
-                      aria-hidden
-                      className="pointer-events-none absolute inset-x-0 z-10 h-px bg-foreground"
-                      style={{ top: y(nowMin) }}
-                    >
-                      <span className="absolute -top-[3px] -left-[3px] size-[7px] rounded-full bg-foreground" />
-                    </div>
-                  )}
-              </div>
-            </React.Fragment>
-          )
-        })}
-      </div>
-    </section>
-  )
-}
-
-/* Today ------------------------------------------------------------------- */
-
-/** One-word text label per block. Style backs it up; never color alone. */
-function todayTag(item: Item, mark: "now" | "next" | undefined) {
-  if (mark === "now") return "Now"
-  if (mark === "next") return "Next"
-  if (item.state === "proposed") return "Proposed"
-  if (item.state === "moving") return "Move proposed"
-  if (item.state === "cancelling") return "Cancel proposed"
-  if (item.state === "added") return "Added"
-  if (item.state === "moved") return "Moved"
-  // All-day events are free by default, so only timed ones say so.
-  if (!item.busy && !item.iv.allDay) return "Free"
-  return null
-}
-
-/** The current time between two events: a dot and a hairline. Decorative; the Now / Next labels carry it. */
-function NowLine() {
-  return (
-    <li aria-hidden className="flex items-center gap-2 py-0.5">
-      <span className="size-2 shrink-0 rounded-full bg-foreground" />
-      <span className="h-px flex-1 bg-foreground" />
-    </li>
-  )
-}
-
-function TodayCard({
-  day,
-  items,
-  tz,
-  todayKey,
-  nowT,
-  selected,
-  itemButtonProps,
-  shortAt,
-  skeleton,
-  zoneLabel,
-}: {
-  day: string | null
-  items: Item[]
-  tz: string
-  todayKey: string | null
-  nowT: number | null
-  selected: string | null
-  itemButtonProps: ItemButtonProps
-  shortAt: (t: number) => string
-  skeleton: boolean
-  zoneLabel: string
-}) {
-  const locale = useGenUILocale()
-  const allDay = day
-    ? items.filter(
-        (i) =>
-          i.iv.allDay &&
-          diffDays(i.iv.startKey, day) >= 0 &&
-          diffDays(day, i.iv.endKey) > 0,
-      )
-    : []
-  const timed = day
-    ? items.flatMap((item) => {
-        if (item.iv.allDay) return []
-        const seg = segmentOnDay(item.iv, day, tz)
-        return seg ? [{ item, ...seg }] : []
-      })
-    : []
-  // Only real (or applied) events get Now / Next; proposals keep their label.
-  const marks =
-    day && day === todayKey
-      ? nowAndNext(
-          timed
-            .filter(
-              ({ item }) =>
-                item.state === "event" ||
-                item.state === "added" ||
-                item.state === "moved",
-            )
-            .map(({ item }) => ({
-              key: item.key,
-              start: item.iv.start,
-              end: item.iv.end,
-            })),
-          nowT,
-        )
-      : new Map<string, "now" | "next">()
-
-  const empty = allDay.length === 0 && timed.length === 0
-
-  // The current time as a line between the events that are over (or running)
-  // and the ones still to come; only on today.
-  const nowLine =
-    day && day === todayKey && nowT !== null && timed.length > 0
-      ? (() => {
-          const i = timed.findIndex(({ item }) => item.iv.start > nowT)
-          return i < 0 ? timed.length : i
-        })()
-      : -1
-
-  return (
-    <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-4 px-3 py-3">
-      <div className="flex flex-col">
-        {day ? (
-          <>
-            <span aria-hidden className={genuiType.label}>
-              {formatDay(day, "weekday", locale)}
-            </span>
-            <span aria-hidden className={cn(genuiType.display, "text-[40px]")}>
-              {formatDay(day, "day", locale)}
-            </span>
-            <span className="sr-only">
-              {formatDay(day, "long", locale)}
-              {day === todayKey && ", today"}. Times in {zoneLabel}.
-            </span>
-          </>
-        ) : (
-          <>
-            <Skeleton className="h-3 w-8" />
-            <Skeleton className="mt-1.5 h-11 w-14" />
-          </>
-        )}
-      </div>
-
-      {/* Long days scroll inside the card; the padding keeps focus rings visible. */}
-      <ScrollFade className="-m-1 max-h-96 min-w-0" viewportClassName="flex flex-col gap-1.5 overflow-y-auto p-1">
-        {allDay.length > 0 && (
-          <ul aria-label="All day" className="flex flex-col gap-1.5">
-            {allDay.map((item) => {
-              const tag = todayTag(item, undefined)
-              return (
-                <li key={item.key}>
-                  <motion.button
-                    {...itemButtonProps(item)}
-                    initial={{ opacity: 0, y: 4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={genuiMotion.fade}
-                    style={calStyle(item)}
-                    className={cn(
-                      "flex min-h-8 w-full min-w-0 items-center gap-2 rounded-full px-3.5 py-1 text-left text-[13px] outline-none transition-colors",
-                      "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2 focus-visible:ring-offset-card",
-                      item.state === "proposed"
-                        ? "border border-dashed border-foreground/50 bg-card hover:bg-muted/50"
-                        : struck(item)
-                          ? "border border-border bg-transparent text-muted-foreground opacity-70 hover:opacity-100"
-                          : `border border-transparent ${CAL_FILL}`,
-                      selected === item.key && "ring-2 ring-ring",
-                    )}
-                  >
-                    <span
-                      className={cn(
-                        "min-w-0 flex-1 truncate font-semibold",
-                        struck(item) &&
-                          "line-through decoration-muted-foreground/70",
-                      )}
-                    >
-                      {item.title}
-                    </span>
-                    {tag && <span className="shrink-0 opacity-80">{tag}</span>}
-                  </motion.button>
-                </li>
-              )
-            })}
-          </ul>
-        )}
-
-        {timed.length > 0 && (
-          <ol aria-label="Events" className="flex flex-col gap-1.5">
-            {timed.map(({ item, startMin, endMin }, index) => {
-              const mark = marks.get(item.key)
-              const past =
-                nowLine >= 0 &&
-                item.iv.end > item.iv.start &&
-                item.iv.end <= (nowT ?? 0)
-              const tag = todayTag(item, mark)
-              const untimed = item.iv.end === item.iv.start
-              const continues = item.iv.startKey !== day
-              const props = itemButtonProps(item)
-              return (
-                <React.Fragment key={item.key}>
-                {nowLine === index && <NowLine />}
-                <li>
-                  <motion.button
-                    {...props}
-                    aria-label={
-                      mark === "now"
-                        ? `${props["aria-label"]}, happening now`
-                        : mark === "next"
-                          ? `${props["aria-label"]}, up next`
-                          : props["aria-label"]
-                    }
-                    initial={{ opacity: 0, y: 4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={genuiMotion.fade}
-                    style={{
-                      ...calStyle(item),
-                      minHeight: untimed
-                        ? undefined
-                        : agendaBlockHeight(endMin - startMin),
-                    }}
-                    className={cn(
-                      "flex w-full min-w-0 flex-col justify-start gap-0.5 rounded-[10px] px-4 py-3 text-left outline-none transition-colors",
-                      "focus-visible:ring-2 focus-visible:ring-ring/50",
-                      item.state === "proposed"
-                        ? "border border-dashed border-foreground/50 bg-card hover:bg-muted/50"
-                        : struck(item)
-                          ? "border border-border bg-transparent text-muted-foreground opacity-70 hover:opacity-100"
-                          : !item.busy && item.state === "event"
-                            ? "border border-border bg-transparent hover:bg-foreground/5"
-                            : `border border-transparent ${CAL_FILL}`,
-                      past && "opacity-60 hover:opacity-100",
-                      selected === item.key && "ring-2 ring-ring",
-                    )}
-                  >
-                    <span className="flex w-full min-w-0 items-baseline gap-2">
-                      <ItemTitle
-                        item={item}
-                        onFill={isFilled(item)}
-                        className="min-w-0 flex-1 text-[13px] leading-snug font-semibold"
-                      />
-                      {tag && (
+                        {item.title}
+                      </span>
+                      {changed && (
                         <span
                           className={cn(
-                            "shrink-0 text-[13px]",
-                            mark ? "font-semibold" : "text-muted-foreground",
+                            SCHEDULE_LABEL,
+                            "shrink-0 font-normal text-background/70",
                           )}
                         >
-                          {tag}
+                          {timeText(item.iv.start)}
                         </span>
                       )}
                     </span>
-                    {!untimed && (
-                      <span className="truncate text-[13px] text-muted-foreground tabular-nums">
-                        {continues
-                          ? `Until ${formatTime(item.iv.end, tz, locale)}`
-                          : formatTimeRange(
-                              item.iv.start,
-                              item.iv.end,
-                              tz,
-                              locale,
-                            )}
-                      </span>
-                    )}
-                    {item.state === "proposed" &&
-                      item.movedFrom !== undefined && (
-                        <span className="truncate text-[13px] text-muted-foreground">
-                          Moved from {shortAt(item.movedFrom)}
-                        </span>
-                      )}
-                    {item.state === "moving" && item.movedTo !== undefined && (
-                      <span className="truncate text-[13px]">
-                        Moving to {shortAt(item.movedTo)}
-                      </span>
-                    )}
-                    {item.conflicts.length > 0 && (
-                      <span className="truncate text-[13px]">
-                        Conflicts with {joinTitles(item.conflicts)}
-                      </span>
-                    )}
-                  </motion.button>
-                </li>
-                </React.Fragment>
+                  )}
+                  <span className="sr-only">{itemLabel(item)}</span>
+                </motion.div>
               )
             })}
-            {nowLine === timed.length && <NowLine />}
-          </ol>
-        )}
-
-        {skeleton && (
-          <div aria-hidden className="flex flex-col gap-1.5">
-            <Skeleton className="h-8 w-full rounded-full" />
-            <Skeleton className="h-16 w-full rounded-lg" />
-            <Skeleton className="h-11 w-full rounded-lg" />
+            {skeleton && index % 2 === 0 && (
+              <Skeleton
+                className="absolute inset-x-0 rounded-[8px]"
+                style={{ top: hourPx * (1 + (index % 3)), height: hourPx }}
+              />
+            )}
           </div>
-        )}
-        {empty && !skeleton && day && (
-          <p className="py-2 text-[13px] text-muted-foreground">
-            Nothing scheduled
-          </p>
-        )}
-      </ScrollFade>
-    </div>
+        ))}
+      </div>
+    </ScrollFade>
   )
 }
 
 /* Month ------------------------------------------------------------------- */
 
-function MonthView({
-  anchor,
-  firstDay,
+/** Events a day cell shows before the rest fold into "+N more". */
+const MONTH_SHOWS = 3
+
+function MonthGrid({
+  month,
   items,
   todayKey,
-  selected,
-  expandedDays,
-  onExpand,
-  itemButtonProps,
   timeText,
+  itemLabel,
   skeleton,
 }: {
-  anchor: string
-  firstDay: number
+  month: string
   items: Item[]
   todayKey: string | null
-  selected: string | null
-  expandedDays: Set<string>
-  onExpand: (day: string) => void
-  itemButtonProps: ItemButtonProps
   timeText: (t: number) => string
+  itemLabel: (item: Item) => string
   skeleton: boolean
 }) {
   const locale = useGenUILocale()
-  const weeks = monthGrid(anchor, firstDay)
-  const gridRef = React.useRef<HTMLDivElement>(null)
-  const month = anchor.slice(0, 7)
-
-  // Arrow keys move between days; Up/Down move a week.
-  const onKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {
-    const steps: Record<string, number> = {
-      ArrowLeft: -1,
-      ArrowRight: 1,
-      ArrowUp: -7,
-      ArrowDown: 7,
-    }
-    const delta = steps[e.key]
-    const grid = gridRef.current
-    const cell = (e.currentTarget as HTMLElement).closest<HTMLElement>(
-      "[data-day]",
-    )
-    if (!delta || !grid || !cell?.dataset.day) return
-    let key = cell.dataset.day
-    for (let i = 0; i < 42; i++) {
-      key = addDays(key, delta)
-      const day = grid.querySelector(`[data-day="${key}"]`)
-      if (!day) return
-      const target = day.querySelector<HTMLElement>("[data-cal-focus]")
-      if (target) {
-        e.preventDefault()
-        target.focus()
-        return
-      }
-    }
-  }
+  const firstDay = React.useMemo(() => firstDayOfWeek(locale), [locale])
+  const weeks = monthGrid(month, firstDay)
+  const ym = month.slice(0, 7)
+  const [expanded, setExpanded] = React.useState<Set<string>>(() => new Set())
 
   return (
-    <div ref={gridRef}>
-      <div aria-hidden className="grid grid-cols-7 border-b">
+    <ScrollFade
+      label="Month"
+      viewportClassName="overflow-x-auto overscroll-x-contain px-3 pt-1 pb-3"
+    >
+      <div className="grid min-w-[34rem] grid-cols-7 gap-1.5">
         {weeks[0].map((day) => (
           <div
             key={day}
-            className="px-1.5 py-1.5 text-[13px] text-muted-foreground"
+            aria-hidden
+            className={cn(SCHEDULE_LABEL, "px-1.5 pb-1.5 text-muted-foreground")}
           >
             {formatDay(day, "weekday", locale)}
           </div>
         ))}
-      </div>
-      {weeks.map((week) => (
-        <div
-          key={week[0]}
-          className="grid grid-cols-7 border-b last:border-b-0"
-        >
-          {week.map((day) => {
-            const inMonth = day.startsWith(month)
-            const dayItems = items.filter(
-              (i) =>
-                diffDays(i.iv.startKey, day) >= 0 &&
-                diffDays(day, i.iv.endKey) > 0,
-            )
-            const collapsed =
-              dayItems.length > MONTH_COLLAPSE_OVER && !expandedDays.has(day)
-            const shown = collapsed
-              ? dayItems.slice(0, MONTH_COLLAPSED_SHOWS)
-              : dayItems
-            const isToday = day === todayKey
-            return (
-              <div
-                key={day}
-                data-day={day}
+        {weeks.flat().map((day) => {
+          const inMonth = day.startsWith(ym)
+          const isToday = day === todayKey
+          const dayItems = inMonth ? items.filter((i) => onDay(i, day)) : []
+          const open = expanded.has(day)
+          const shown =
+            open || dayItems.length <= MONTH_SHOWS
+              ? dayItems
+              : dayItems.slice(0, MONTH_SHOWS)
+          const hidden = dayItems.length - shown.length
+          return (
+            <div
+              key={day}
+              aria-hidden={inMonth ? undefined : true}
+              className={cn(
+                "flex min-h-[6.75rem] min-w-0 flex-col gap-1 rounded-[10px] p-1.5",
+                inMonth
+                  ? "bg-foreground/[0.035] dark:bg-foreground/[0.07]"
+                  : "bg-foreground/[0.015] dark:bg-foreground/[0.03]",
+              )}
+            >
+              <span
+                aria-hidden
                 className={cn(
-                  "flex min-h-[5.25rem] min-w-0 flex-col gap-0.5 p-1",
+                  "inline-flex h-6 min-w-6 items-center self-start rounded-full px-1.5 text-[13px] tabular-nums",
+                  !inMonth && "text-muted-foreground/60",
+                  isToday && "bg-foreground font-medium text-background",
                 )}
               >
-                <span
-                  className={cn(
-                    "inline-flex size-5 items-center justify-center rounded-full text-xs tabular-nums",
-                    !inMonth && "text-muted-foreground",
-                    isToday && "bg-foreground font-medium text-background",
-                  )}
+                {formatDay(day, "day", locale)}
+              </span>
+              {inMonth && (
+                <h4 className="sr-only">
+                  {formatDay(day, "long", locale)}
+                  {isToday && ", today"}
+                </h4>
+              )}
+              {hidden > 0 && (
+                <button
+                  type="button"
+                  aria-expanded={false}
+                  aria-label={`Show ${hidden} more on ${formatDay(day, "long", locale)}`}
+                  onClick={() => setExpanded((prev) => new Set(prev).add(day))}
+                  className="relative self-start rounded-sm px-1.5 text-[13px] text-muted-foreground outline-none after:absolute after:-inset-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
                 >
-                  {formatDay(day, "day", locale)}
-                  {isToday && <span className="sr-only">, today</span>}
-                </span>
-                {shown.map((item) => {
-                  const props = itemButtonProps(item)
-                  return (
-                    <motion.button
-                      key={item.key}
-                      {...props}
-                      data-cal-focus=""
-                      onKeyDown={(e) => {
-                        props.onKeyDown(e)
-                        onKeyDown(e)
-                      }}
-                      initial={{ opacity: 0, y: 4 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={genuiMotion.fade}
-                      style={calStyle(item)}
-                      className={cn(
-                        itemClasses(item, selected === item.key),
-                        "flex h-6 min-w-0 items-center gap-1 px-1 text-[13px]",
-                        !item.iv.allDay &&
-                          item.state !== "proposed" &&
-                          "border-transparent bg-transparent hover:bg-muted",
-                      )}
-                    >
-                      {!item.iv.allDay && (
-                        <span className="shrink-0 text-muted-foreground tabular-nums">
-                          {timeText(item.iv.start)}
-                        </span>
-                      )}
-                      <ItemTitle
-                        item={item}
-                        onFill={item.iv.allDay && isFilled(item)}
-                      />
-                    </motion.button>
-                  )
-                })}
-                {collapsed && (
-                  <button
-                    type="button"
-                    data-cal-focus=""
-                    onKeyDown={onKeyDown}
-                    aria-expanded={false}
-                    aria-label={`Show ${dayItems.length - shown.length} more events on ${formatDay(day, "long", locale)}`}
-                    onClick={() => onExpand(day)}
-                    className="h-6 rounded-md px-1 text-left text-[13px] font-medium text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+                  +{hidden} more
+                </button>
+              )}
+              <ul className="mt-auto flex min-w-0 flex-col gap-1">
+                {shown.map((item) => (
+                  <motion.li
+                    key={item.key}
+                    {...fadeIn}
+                    className={cn(
+                      "flex h-[22px] min-w-0 items-center gap-1.5 rounded-[6px] px-1.5 text-[13px]",
+                      itemTone(item),
+                    )}
                   >
-                    +{dayItems.length - shown.length} more
-                  </button>
-                )}
-                {skeleton && inMonth && Number(day.slice(8, 10)) % 4 === 1 && (
-                  <Skeleton className="h-4 w-4/5" />
-                )}
-              </div>
-            )
-          })}
-        </div>
-      ))}
-    </div>
-  )
-}
-
-/* Agenda ------------------------------------------------------------------ */
-
-function AgendaView({
-  items,
-  rangeStart,
-  spanDays,
-  todayKey,
-  selected,
-  itemButtonProps,
-  timeText,
-  shortAt,
-  skeleton,
-  heightClass,
-}: {
-  items: Item[]
-  rangeStart: string | null
-  spanDays: number
-  todayKey: string | null
-  selected: string | null
-  itemButtonProps: ItemButtonProps
-  timeText: (t: number) => string
-  shortAt: (t: number) => string
-  skeleton: boolean
-  /** Max height of the scrolling list (a Tailwind `max-h-*` class). */
-  heightClass: string
-}) {
-  const locale = useGenUILocale()
-  // Every day in the range, plus any day an event reaches outside it.
-  let first = rangeStart ?? items[0]?.iv.startKey
-  let last = rangeStart ? addDays(rangeStart, spanDays) : first
-  for (const i of items) {
-    if (first && diffDays(i.iv.startKey, first) > 0) first = i.iv.startKey
-    if (last && diffDays(last, i.iv.endKey) > 0) last = i.iv.endKey
-  }
-  const days =
-    first && last ? dayRange(first, Math.min(62, diffDays(first, last))) : []
-  const groups = days
-    .map((day) => ({
-      day,
-      items: items.filter(
-        (i) =>
-          diffDays(i.iv.startKey, day) >= 0 && diffDays(day, i.iv.endKey) > 0,
-      ),
-    }))
-    .filter((g) => g.items.length > 0)
-
-  if (groups.length === 0) {
-    return skeleton ? (
-      <div className="flex flex-col gap-3 px-3 py-3">
-        <Skeleton className="h-4 w-32" />
-        <Skeleton className="h-10 w-full rounded-lg" />
-        <Skeleton className="h-10 w-full rounded-lg" />
-      </div>
-    ) : (
-      <p className="px-3 py-3 text-[13px] text-muted-foreground">
-        Nothing scheduled
-      </p>
-    )
-  }
-
-  return (
-    <ScrollFade
-      label="Agenda"
-      className={heightClass}
-      viewportClassName="overflow-y-auto pb-3"
-    >
-      <ol className="flex flex-col gap-5 pt-1">
-        {groups.map(({ day, items: dayItems }) => (
-          <li key={day}>
-            <h4 className={cn(genuiType.label, "px-3 pb-1")}>
-              {formatDay(day, "long", locale)}
-              {day === todayKey && " · Today"}
-            </h4>
-            <ul>
-              {dayItems.map((item) => {
-                const continues = item.iv.startKey !== day
-                return (
-                  <li key={item.key}>
-                    <motion.button
-                      {...itemButtonProps(item)}
-                      initial={{ opacity: 0, y: 4 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={genuiMotion.fade}
+                    <span
+                      aria-hidden
                       className={cn(
-                        "flex w-full gap-3 px-3 py-3 text-left text-[13px] outline-none transition-colors",
-                        "hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset",
-                        selected === item.key && "bg-muted/50",
-                        struck(item) && "text-muted-foreground",
+                        "min-w-0 flex-1 truncate",
+                        isChanged(item) && "font-semibold",
+                        isStruck(item) && "line-through",
                       )}
                     >
-                      <span className="w-28 shrink-0 pt-px text-[13px] text-muted-foreground tabular-nums">
-                        {item.iv.allDay
-                          ? "All day"
-                          : continues
-                            ? `Until ${timeText(item.iv.end)}`
-                            : `${timeText(item.iv.start)}–${timeText(item.iv.end)}`}
-                      </span>
-                      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                        <span className="flex min-w-0 items-center gap-2">
-                          <ItemTitle item={item} />
-                          {item.state === "proposed" && (
-                            <Badge variant="warning" className="text-[13px]">
-                              Proposed
-                            </Badge>
-                          )}
-                        </span>
-                        {item.location && (
-                          <span className="truncate text-[13px] text-muted-foreground">
-                            {item.location}
-                          </span>
+                      {item.title}
+                    </span>
+                    {!item.iv.allDay && item.iv.startKey === day && (
+                      <span
+                        aria-hidden
+                        className={cn(
+                          SCHEDULE_LABEL,
+                          "shrink-0",
+                          isChanged(item)
+                            ? "text-background/70"
+                            : "text-muted-foreground",
                         )}
-                        <AgendaNotes item={item} shortAt={shortAt} />
+                      >
+                        {timeText(item.iv.start)}
                       </span>
-                    </motion.button>
-                  </li>
-                )
-              })}
-            </ul>
-          </li>
-        ))}
-      </ol>
+                    )}
+                    <span className="sr-only">{itemLabel(item)}</span>
+                  </motion.li>
+                ))}
+              </ul>
+              {skeleton && inMonth && Number(day.slice(8, 10)) % 4 === 1 && (
+                <Skeleton className="mt-auto h-[22px] w-full rounded-[6px]" />
+              )}
+            </div>
+          )
+        })}
+      </div>
     </ScrollFade>
   )
 }
 
-function AgendaNotes({
-  item,
-  shortAt,
+/* Today ------------------------------------------------------------------- */
+
+function TodayList({
+  day,
+  items,
+  todos,
+  tz,
+  todayKey,
+  nowT,
+  itemLabel,
+  skeleton,
 }: {
-  item: Item
-  shortAt: (t: number) => string
+  day: string
+  items: Item[]
+  todos: CalendarTodo[]
+  tz: string
+  todayKey: string | null
+  nowT: number | null
+  itemLabel: (item: Item) => string
+  skeleton: boolean
 }) {
-  const notes: string[] = []
-  if (item.state === "proposed" && item.movedFrom !== undefined) {
-    notes.push(`Moved from ${shortAt(item.movedFrom)}`)
-  }
-  if (item.state === "moving" && item.movedTo !== undefined) {
-    notes.push(`Moving to ${shortAt(item.movedTo)}`)
-  }
-  if (item.state === "cancelling") notes.push("Cancel proposed")
-  if (item.state === "added") notes.push("Added")
-  if (item.state === "moved") notes.push("Moved")
-  if (!item.busy && item.state === "event") notes.push("Free")
+  const locale = useGenUILocale()
+  const isToday = day === todayKey
+  const dayItems = items.filter((i) => onDay(i, day))
+  const eventCount = dayItems.filter((i) => i.state !== "proposed").length
+  const counts = [
+    `${eventCount} ${eventCount === 1 ? "event" : "events"}`,
+    todos.length > 0 && `${todos.length} ${todos.length === 1 ? "to-do" : "to-dos"}`,
+  ]
+    .filter(Boolean)
+    .join(" · ")
+
+  // Narrow cards put the time and duration on one line and the title, in
+  // full, under them; from @sm the three sit in one row.
+  const row =
+    "grid min-h-12 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1.5 rounded-[10px] px-3 py-2.5 @sm:grid-cols-[5.5rem_minmax(0,1fr)_auto]"
+  const titleCell =
+    "col-span-2 row-start-2 min-w-0 @sm:col-span-1 @sm:col-start-2 @sm:row-start-1"
+
   return (
-    <>
-      {notes.length > 0 && (
-        <span className="text-[13px] text-muted-foreground">
-          {notes.join(" · ")}
-        </span>
-      )}
-      {item.conflicts.length > 0 && (
-        <span className="flex items-start gap-1.5 text-[13px]">
-          <AlertTriangleIcon aria-hidden className="mt-px size-3.5 shrink-0" />
-          Conflicts with {joinTitles(item.conflicts)}
-        </span>
-      )}
-    </>
+    <div className="flex flex-col gap-4 px-3 pt-3 pb-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <p aria-hidden className={cn(SCHEDULE_LABEL, "text-muted-foreground")}>
+          {isToday && "Today · "}
+          {formatDay(day, "date", locale)}
+        </p>
+        {!skeleton && <p className={genuiType.body}>{counts}</p>}
+      </div>
+
+      <ol className="flex flex-col gap-1.5">
+        {dayItems.map((item) => {
+          const { iv } = item
+          const seg = iv.allDay ? null : segmentOnDay(iv, day, tz)
+          const starts = iv.startKey === day
+          const when = iv.allDay
+            ? "All day"
+            : starts
+              ? formatTime(iv.start, tz, locale)
+              : `Until ${formatTime(iv.end, tz, locale)}`
+          const live =
+            isToday &&
+            nowT !== null &&
+            !isStruck(item) &&
+            item.state !== "proposed"
+          const isNow = live && iv.start <= nowT && nowT < iv.end
+          const past = live && iv.end > iv.start && iv.end <= nowT
+          const changed = isChanged(item)
+          const aside = isNow
+            ? "Now"
+            : seg
+              ? formatDuration(seg.endMin - seg.startMin, locale)
+              : null
+          return (
+            <motion.li
+              key={item.key}
+              {...fadeIn}
+              className={cn(
+                row,
+                changed
+                  ? CHANGED_FILL
+                  : isStruck(item)
+                    ? cn(DASHED, "text-muted-foreground")
+                    : item.busy || iv.allDay
+                      ? "border border-border bg-foreground/[0.03] dark:bg-foreground/[0.06]"
+                      : FREE,
+                past && "opacity-60",
+              )}
+            >
+              <span
+                aria-hidden
+                className={cn(
+                  SCHEDULE_LABEL,
+                  "truncate",
+                  changed ? "text-background/70" : "text-muted-foreground",
+                )}
+              >
+                {when}
+              </span>
+              <span
+                aria-hidden
+                className={cn(
+                  genuiType.title,
+                  titleCell,
+                  "break-words leading-snug @sm:truncate",
+                  isStruck(item) && "line-through decoration-muted-foreground/70",
+                )}
+              >
+                {item.title}
+              </span>
+              <span
+                aria-hidden
+                className={cn(
+                  SCHEDULE_LABEL,
+                  "col-start-2 row-start-1 shrink-0 @sm:col-start-3",
+                  isNow
+                    ? "text-foreground"
+                    : changed
+                      ? "text-background/70"
+                      : "text-muted-foreground",
+                )}
+              >
+                {aside}
+              </span>
+              <span className="sr-only">
+                {itemLabel(item)}
+                {isNow && ", happening now"}
+                {past && ", over"}
+              </span>
+            </motion.li>
+          )
+        })}
+
+        {todos.map((todo) => (
+          <motion.li
+            key={`t:${todo.id}`}
+            {...fadeIn}
+            className={cn(row, "border border-border")}
+          >
+            <span aria-hidden className={cn(SCHEDULE_LABEL, "text-muted-foreground")}>
+              To do
+            </span>
+            <span className={cn(titleCell, "flex items-center gap-2.5 @sm:col-span-2")}>
+              {/* A status mark, not a control: ticking a task belongs to the To-do List. */}
+              <span
+                aria-hidden
+                className="flex size-4 shrink-0 items-center justify-center rounded-[4px] border-[1.5px] border-muted-foreground"
+              >
+                {todo.done && <CheckIcon className="size-3" strokeWidth={3} />}
+              </span>
+              <span
+                className={cn(
+                  genuiType.title,
+                  "min-w-0 break-words leading-snug @sm:truncate",
+                  todo.done && "text-muted-foreground line-through",
+                )}
+              >
+                <span className="sr-only">{todo.done ? "Done: " : "To do: "}</span>
+                {todo.title}
+              </span>
+            </span>
+          </motion.li>
+        ))}
+
+        {skeleton && (
+          <li aria-hidden className="flex flex-col gap-1.5">
+            <Skeleton className="h-12 w-full rounded-[10px]" />
+            <Skeleton className="h-12 w-full rounded-[10px]" />
+            <Skeleton className="h-12 w-full rounded-[10px]" />
+          </li>
+        )}
+        {!skeleton && dayItems.length === 0 && todos.length === 0 && (
+          <li className={cn(row, "border border-border", genuiType.meta)}>
+            <span className="col-span-full">Nothing scheduled</span>
+          </li>
+        )}
+      </ol>
+    </div>
   )
 }

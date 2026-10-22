@@ -2512,23 +2512,22 @@
       "name": "calendar",
       "type": "registry:component",
       "title": "Calendar",
-      "description": "The user's real schedule (day, week, month or agenda), with proposed creates, moves and cancels shown in context. Conflicts are flagged, and the user accepts or declines each change before anything is written. Category: Act.",
+      "description": "The user's real schedule as a week or day time grid, a month of day tiles, or a what's-on-today list of events and to-dos, with proposed creates, moves and cancels shown in place. Conflicts are flagged, and the user includes or leaves out each change before anything is written. Category: Act.",
       "categories": [
         "act"
       ],
       "dependencies": [
         "zod",
         "lucide-react",
-        "motion",
-        "@base-ui/react"
+        "motion"
       ],
       "registryDependencies": [
         "button",
         "textarea",
+        "https://animate-ui.com/r/components-base-checkbox.json",
         "https://animate-ui.com/r/primitives-effects-auto-height.json",
         "https://animate-ui.com/r/primitives-texts-shimmering.json",
-        "tooltip",
-        "badge"
+        "tooltip"
       ],
       "files": [
         {
@@ -2560,11 +2559,6 @@
           "path": "src/components/genui/scroll-fade.tsx",
           "type": "registry:ui",
           "target": "components/genui/scroll-fade.tsx"
-        },
-        {
-          "path": "src/components/genui/segmented.tsx",
-          "type": "registry:ui",
-          "target": "components/genui/segmented.tsx"
         },
         {
           "path": "src/components/genui/locale.ts",

@@ -17,11 +17,7 @@ export type CalendarEventLike = {
   start: string
   end: string
   allDay?: boolean
-  calendar?: string
-  location?: string
-  attendees?: number
   busy?: boolean
-  url?: string
 }
 
 export type CalendarProposalLike = {
@@ -179,6 +175,7 @@ export function diffDays(a: string, b: string): number {
 }
 
 /** 0 = Sunday … 6 = Saturday. */
+/** 0 = Sunday … 6 = Saturday. */
 export function weekdayOf(key: string): number {
   return new Date(keyToUtc(key)).getUTCDay()
 }
@@ -195,13 +192,6 @@ export function daysInMonth(key: string): number {
   const y = Number(key.slice(0, 4))
   const m = Number(key.slice(5, 7))
   return new Date(Date.UTC(y, m, 0)).getUTCDate()
-}
-
-export function addMonths(key: string, n: number): string {
-  const y = Number(key.slice(0, 4))
-  const m = Number(key.slice(5, 7)) - 1 + n
-  const d = new Date(Date.UTC(y, m, 1))
-  return d.toISOString().slice(0, 10)
 }
 
 /** Consecutive day keys. */
@@ -243,14 +233,7 @@ export function firstDayOfWeek(locale: string = DEFAULT_LOCALE): number {
 /** A day key for display, never shifted by the viewer's timezone. */
 export function formatDay(
   key: string,
-  style:
-    | "weekday"
-    | "weekday-long"
-    | "day"
-    | "date"
-    | "long"
-    | "month"
-    | "month-short",
+  style: "weekday" | "day" | "date" | "long" | "month",
   locale: string = DEFAULT_LOCALE,
 ): string {
   const t = keyToUtc(key)
@@ -258,17 +241,13 @@ export function formatDay(
   const options: Intl.DateTimeFormatOptions =
     style === "weekday"
       ? { weekday: "short" }
-      : style === "weekday-long"
-        ? { weekday: "long" }
-        : style === "day"
-          ? { day: "numeric" }
-          : style === "date"
-            ? { weekday: "short", month: "short", day: "numeric" }
-            : style === "month"
-              ? { month: "long", year: "numeric" }
-              : style === "month-short"
-                ? { month: "short" }
-                : { weekday: "long", month: "long", day: "numeric" }
+      : style === "day"
+        ? { day: "numeric" }
+        : style === "date"
+          ? { weekday: "short", month: "short", day: "numeric" }
+          : style === "month"
+            ? { month: "long", year: "numeric" }
+            : { weekday: "long", month: "long", day: "numeric" }
   return new Intl.DateTimeFormat(locale, {
     ...options,
     timeZone: "UTC",
@@ -323,44 +302,74 @@ export function formatTime(
 }
 
 /**
- * A time range with the day period said once when both ends share it:
- * '10:00–11:00 AM', '11:30 AM–12:30 PM', or '10:00–11:00' in 24-hour locales.
+ * A compact hour label for the time grid: '9A' and '12P' where the locale
+ * says AM / PM, the bare hour ('09', '16') in 24-hour locales, the full
+ * label where the day period isn't Latin.
  */
-export function formatTimeRange(
-  start: number,
-  end: number,
+export function formatHour(hour: number, locale: string = DEFAULT_LOCALE) {
+  const parts = new Intl.DateTimeFormat(locale, {
+    hour: "numeric",
+    timeZone: "UTC",
+  }).formatToParts(Date.UTC(2000, 0, 1, hour))
+  const period = parts.find((p) => p.type === "dayPeriod")?.value
+  const h = parts.find((p) => p.type === "hour")?.value ?? String(hour)
+  if (!period) return h
+  // Only Latin AM / PM shortens to one letter; '午前' and '午後' would collide.
+  if (!/^[ap]\.?\s?m\.?$/i.test(period.trim())) {
+    return parts.map((p) => p.value).join("")
+  }
+  return `${h}${period.trim()[0].toUpperCase()}`
+}
+
+/**
+ * A compact time for tight spaces (month pills): '10A' and '1:30P' where the
+ * locale says AM / PM (the same rule as `formatHour`), '10:00' and '13:30'
+ * in 24-hour locales.
+ */
+export function formatTimeShort(
+  t: number,
   timeZone: string,
   locale: string = DEFAULT_LOCALE,
 ) {
-  const f = new Intl.DateTimeFormat(locale, {
+  const parts = new Intl.DateTimeFormat(locale, {
     hour: "numeric",
     minute: "2-digit",
     timeZone,
-  })
-  const split = (t: number) => {
-    const parts = f.formatToParts(t)
-    const period = parts.find((p) => p.type === "dayPeriod")?.value ?? ""
-    const time = parts
+  }).formatToParts(t)
+  const period = parts.find((p) => p.type === "dayPeriod")?.value?.trim()
+  if (!period || !/^[ap]\.?\s?m\.?$/i.test(period)) {
+    return parts
       .filter((p) => p.type !== "dayPeriod")
       .map((p) => p.value)
       .join("")
       .trim()
-    return { time, period, full: f.format(t) }
   }
-  const a = split(start)
-  const b = split(end)
-  if (a.period && a.period === b.period) {
-    return `${a.time}–${b.time} ${b.period}`
-  }
-  return `${a.full}–${b.full}`
+  const h = parts.find((p) => p.type === "hour")?.value ?? ""
+  const m = parts.find((p) => p.type === "minute")?.value ?? "00"
+  return `${h}${m === "00" ? "" : `:${m}`}${period[0].toUpperCase()}`
 }
 
-/** An hour label for the time grid, e.g. '9 AM' or '09'. */
-export function formatHour(hour: number, locale: string = DEFAULT_LOCALE) {
-  return new Intl.DateTimeFormat(locale, {
-    hour: "numeric",
-    timeZone: "UTC",
-  }).format(Date.UTC(2000, 0, 1, hour))
+/**
+ * A duration in the viewer's locale: '15 min', '1 hr', '1 hr 30 min'.
+ * Null for zero or less.
+ */
+export function formatDuration(
+  minutes: number,
+  locale: string = DEFAULT_LOCALE,
+): string | null {
+  const total = Math.round(minutes)
+  if (!(total > 0)) return null
+  const unit = (value: number, u: "hour" | "minute") =>
+    new Intl.NumberFormat(locale, {
+      style: "unit",
+      unit: u,
+      unitDisplay: "short",
+    }).format(value)
+  const h = Math.floor(total / 60)
+  const m = total % 60
+  if (h === 0) return unit(m, "minute")
+  if (m === 0) return unit(h, "hour")
+  return `${unit(h, "hour")} ${unit(m, "minute")}`
 }
 
 /** Short weekday of an instant in the calendar's timezone, e.g. 'Thu'. */
@@ -371,40 +380,6 @@ export function formatWeekdayAt(
   locale: string = DEFAULT_LOCALE,
 ) {
   return new Intl.DateTimeFormat(locale, { weekday: style, timeZone }).format(t)
-}
-
-/**
- * The timezone as shown to the user: the IANA name with spaces, plus its
- * offset on the given days. A week crossing a DST change shows both,
- * e.g. 'America/New York (GMT-4 / GMT-5)'.
- */
-export function formatTimeZoneLabel(
-  timeZone: string,
-  days: string[],
-  locale: string = DEFAULT_LOCALE,
-): string {
-  const name = timeZone.replace(/_/g, " ")
-  try {
-    const f = new Intl.DateTimeFormat(locale, {
-      timeZone,
-      timeZoneName: "shortOffset",
-    })
-    const offsetAt = (key: string) => {
-      const v = f
-        .formatToParts(keyToUtc(key))
-        .find((p) => p.type === "timeZoneName")?.value
-      // Node's ICU says "GMT" where browsers say "GMT+0".
-      return v === "GMT" ? "GMT+0" : v
-    }
-    const offsets = [
-      ...new Set(
-        (days.length ? [days[0], days[days.length - 1]] : []).map(offsetAt),
-      ),
-    ].filter(Boolean)
-    return offsets.length ? `${name} (${offsets.join(" / ")})` : name
-  } catch {
-    return name
-  }
 }
 
 /* ------------------------------------------------------------------------ */
@@ -637,18 +612,6 @@ export function segmentOnDay(
   return { startMin, endMin: Math.max(endMin, startMin) }
 }
 
-/** Whether any interval touches the days [start, start + days). */
-export function anyInDays(
-  intervals: Interval[],
-  start: string,
-  days: number,
-): boolean {
-  const end = addDays(start, days)
-  return intervals.some(
-    (iv) => diffDays(iv.startKey, end) > 0 && diffDays(start, iv.endKey) > 0,
-  )
-}
-
 /** Chronological order: start, then all-day first, then longer first. */
 export function compareIntervals(a: Interval, b: Interval): number {
   if (a.startKey !== b.startKey) return a.startKey < b.startKey ? -1 : 1
@@ -656,40 +619,3 @@ export function compareIntervals(a: Interval, b: Interval): number {
   return a.start - b.start || b.end - b.start - (a.end - a.start)
 }
 
-/* ------------------------------------------------------------------------ */
-/* Today card                                                               */
-/* ------------------------------------------------------------------------ */
-
-/**
- * Height of a stacked agenda block: proportional to duration, never shorter
- * than two lines of text, capped so one long event can't take over the card.
- */
-export function agendaBlockHeight(
-  minutes: number,
-  { pxPerHour = 64, min = 44, max = 192 } = {},
-): number {
-  const h = (Math.max(0, minutes) / 60) * pxPerHour
-  return Math.round(Math.min(max, Math.max(min, h)))
-}
-
-/**
- * Which timed blocks are happening now, or (when none is) which one is next.
- * Zero-length entries are never "now". Returns key → 'now' | 'next'.
- */
-export function nowAndNext(
-  spans: { key: string; start: number; end: number }[],
-  now: number | null,
-): Map<string, "now" | "next"> {
-  const out = new Map<string, "now" | "next">()
-  if (now === null) return out
-  for (const s of spans) {
-    if (s.start <= now && now < s.end) out.set(s.key, "now")
-  }
-  if (out.size > 0) return out
-  let next: { key: string; start: number } | null = null
-  for (const s of spans) {
-    if (s.start > now && (!next || s.start < next.start)) next = s
-  }
-  if (next) out.set(next.key, "next")
-  return out
-}
