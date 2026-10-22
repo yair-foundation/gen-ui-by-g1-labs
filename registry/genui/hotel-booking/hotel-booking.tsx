@@ -66,6 +66,7 @@ import {
 } from "./hotel-booking-utils"
 import type {
   Hotel,
+  HotelBookingDraft,
   HotelBookingInput,
   HotelBookingResult,
   HotelBookingStay,
@@ -136,6 +137,13 @@ export type HotelBookingProps = Partial<
    * action; cancel-booking only after the user confirms it.
    */
   onResult?: (result: HotelBookingResult) => void
+  /**
+   * Called when the user's selection changes before they confirm, with the
+   * result Reserve (or Check availability) would send now. Not a decision:
+   * keep the latest and add it to the user's next typed message
+   * (`describeUIState`).
+   */
+  onDraft?: (draft: HotelBookingDraft) => void
   /**
    * Results from history (the tool call's stored output, or several). Renders
    * the finished state and never calls onResult.
@@ -644,6 +652,7 @@ export function HotelBooking({
   now: nowProp,
   status: statusProp,
   onResult,
+  onDraft,
   result,
   className,
 }: HotelBookingProps) {
@@ -804,6 +813,79 @@ export function HotelBooking({
       </SurfaceHeader>
     </>
   )
+
+  // -------------------------------------------------------------------------
+  // Select-mode state, worked out before the confirmation return so the
+  // draft effect below runs on every render, as hooks must.
+
+  const party = current ?? { adults: 1, children: 0, rooms: 1 }
+  const roomCount = party.rooms ?? 1
+  const size = partySize(party)
+  const selectable = (r: ReadyRoom) =>
+    partyFits(r, party) && r.remaining !== 0 && r.rates.length > 0
+  const room =
+    readyRooms.find((r) => r.id === pickedRoom && (locked || selectable(r))) ??
+    readyRooms.find(selectable)
+  const rate =
+    room?.rates.find((r) => r.id === pickedRates[room.id]) ?? room?.rates[0]
+  const pricing = rate ? pricingFor(rate) : null
+  const totals = pricing?.kind === "priced" ? pricing.totals : null
+
+  const datesChanged = !!current && !!quoted && !sameDates(current, quoted)
+  const partyChanged = !!current && !!quoted && !sameParty(current, quoted)
+  const dateIssue =
+    current && datesChanged ? checkDates(current, availability) : null
+  const recheck =
+    !streaming &&
+    !!current &&
+    (datesChanged || partyChanged) &&
+    !dateIssue &&
+    (pricing?.kind === "recheck" || !room)
+
+  const capacity = Math.max(0, ...readyRooms.map((r) => r.maxGuests))
+  const maxGuests = capacity > 0 ? capacity * roomCount : 10
+  const canEditDates =
+    typeof availability?.minDate === "string" &&
+    typeof availability.maxDate === "string"
+
+  const canReserve =
+    !busy &&
+    !locked &&
+    !!room &&
+    !!rate &&
+    !!totals &&
+    !!current &&
+    !dateIssue &&
+    typeof currency === "string"
+
+  // What the user would send if they confirmed now: reserve when the picked
+  // room and rate are priced, change-stay when new dates or guests need a
+  // new quote. Reported once they touch something (D70).
+  const draftResult: SelectDecision | null =
+    isConfirmation || !touched || locked || busy || !current
+      ? null
+      : recheck
+        ? { action: "change-stay", stay: current }
+        : canReserve && room && rate && totals && currency
+          ? {
+              action: "reserve",
+              roomId: room.id,
+              rateId: rate.id,
+              stay: current,
+              total: {
+                amount: totals.total,
+                payNow: totals.payNow,
+                payAtHotel: totals.payAtHotel,
+                currency,
+              },
+            }
+          : null
+  const draftKey = draftResult ? JSON.stringify(draftResult) : null
+  const onDraftRef = React.useRef(onDraft)
+  onDraftRef.current = onDraft
+  React.useEffect(() => {
+    if (draftKey) onDraftRef.current?.(JSON.parse(draftKey))
+  }, [draftKey])
 
   // -------------------------------------------------------------------------
   // Confirmation mode
@@ -1259,46 +1341,6 @@ export function HotelBooking({
 
   // -------------------------------------------------------------------------
   // Select mode
-
-  const party = current ?? { adults: 1, children: 0, rooms: 1 }
-  const roomCount = party.rooms ?? 1
-  const size = partySize(party)
-  const selectable = (r: ReadyRoom) =>
-    partyFits(r, party) && r.remaining !== 0 && r.rates.length > 0
-  const room =
-    readyRooms.find((r) => r.id === pickedRoom && (locked || selectable(r))) ??
-    readyRooms.find(selectable)
-  const rate =
-    room?.rates.find((r) => r.id === pickedRates[room.id]) ?? room?.rates[0]
-  const pricing = rate ? pricingFor(rate) : null
-  const totals = pricing?.kind === "priced" ? pricing.totals : null
-
-  const datesChanged = !!current && !!quoted && !sameDates(current, quoted)
-  const partyChanged = !!current && !!quoted && !sameParty(current, quoted)
-  const dateIssue =
-    current && datesChanged ? checkDates(current, availability) : null
-  const recheck =
-    !streaming &&
-    !!current &&
-    (datesChanged || partyChanged) &&
-    !dateIssue &&
-    (pricing?.kind === "recheck" || !room)
-
-  const capacity = Math.max(0, ...readyRooms.map((r) => r.maxGuests))
-  const maxGuests = capacity > 0 ? capacity * roomCount : 10
-  const canEditDates =
-    typeof availability?.minDate === "string" &&
-    typeof availability.maxDate === "string"
-
-  const canReserve =
-    !busy &&
-    !locked &&
-    !!room &&
-    !!rate &&
-    !!totals &&
-    !!current &&
-    !dateIssue &&
-    typeof currency === "string"
 
   const updateDraft = (patch: Partial<HotelBookingStay>) => {
     if (locked || busy || !current) return
@@ -1902,3 +1944,6 @@ export function HotelBooking({
     </MotionConfig>
   )
 }
+
+// The Renderer hands this component onDraft.
+HotelBooking.genuiDraft = true
