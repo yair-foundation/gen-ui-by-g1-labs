@@ -84,6 +84,47 @@ describe("GenUIRenderer layouts", () => {
   })
 })
 
+/** Reports a draft as it renders, as if the user had just picked. */
+function Picker({ onDraft }: { onDraft?: (draft: unknown) => void }) {
+  onDraft?.({ action: "select", seats: [{ seatId: "14A" }] })
+  return <span data-picker="" />
+}
+Picker.genuiDraft = true
+
+/** Says whether it was handed onDraft. */
+function Plain(props: { onDraft?: unknown }) {
+  return <span data-plain={"onDraft" in props ? "draft" : "none"} />
+}
+
+describe("drafts", () => {
+  const draftCatalog: GenUICatalog = { show_stack: Stack, picker: Picker, plain: Plain }
+  const drafts: unknown[][] = []
+  const renderDraft = (name: string, props: Record<string, unknown> = {}) =>
+    renderToStaticMarkup(
+      <GenUIRenderer
+        call={{ id: "c1", name, props, status: "ready" }}
+        catalog={draftCatalog}
+        onDraft={(call, draft) => drafts.push([call.id, draft])}
+      />,
+    )
+
+  it("passes a call's draft to the host with the call", () => {
+    drafts.length = 0
+    renderDraft("picker")
+    assert.deepEqual(drafts, [["c1", { action: "select", seats: [{ seatId: "14A" }] }]])
+  })
+
+  it("wraps a layout child's draft like its result", () => {
+    drafts.length = 0
+    renderDraft("show_stack", { items: [{ component: "picker", props: {} }] })
+    assert.deepEqual(drafts, [["c1", { child: "0", result: { action: "select", seats: [{ seatId: "14A" }] } }]])
+  })
+
+  it("hands onDraft only to components that set genuiDraft", () => {
+    assert.match(renderDraft("plain"), /data-plain="none"/)
+  })
+})
+
 describe("call state", () => {
   it("resolves lifecycle states in order", () => {
     const base = { id: "x", name: "t", props: {}, status: "ready" as const }

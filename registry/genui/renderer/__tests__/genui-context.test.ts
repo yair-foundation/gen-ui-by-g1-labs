@@ -75,4 +75,24 @@ describe("describeUIState", () => {
     assert.equal(describeUIState([], {}), "")
     assert.equal(describeUIState([{ id: "a", name: "t", result: "x".repeat(50) }], { maxChars: 30 }).length, 30)
   })
+
+  it("lists drafts apart from results, after them", () => {
+    const note = describeUIState([
+      { id: "c1", name: "seat_map", result: undefined, draft: { action: "select", seats: [{ seatId: "14A" }] } },
+      { id: "c2", name: "show_itinerary", result: { removed: ["Coit Tower"] } },
+    ])
+    assert.equal(
+      note,
+      'Interface state the user set:\n- show_itinerary (c2): {"removed":["Coit Tower"]}\n\n' +
+        "Selected on screen, not confirmed yet (a starting point for the user's request, not a decision):\n" +
+        '- seat_map (c1): {"action":"select","seats":[{"seatId":"14A"}]}',
+    )
+  })
+
+  it("words drafts with the same formatters, and skips ones they drop", () => {
+    const formatters = { seat_map: (r: unknown) => ((r as { seats: unknown[] }).seats.length ? "14A" : null) }
+    const draft = (seats: unknown[]) => ({ id: "c1", name: "seat_map", result: undefined, draft: { seats } })
+    assert.match(describeUIState([draft([{}])], { formatters }), /^Selected on screen.*\n- seat_map \(c1\): 14A$/)
+    assert.equal(describeUIState([draft([])], { formatters }), "")
+  })
 })

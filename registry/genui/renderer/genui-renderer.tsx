@@ -210,8 +210,12 @@ export type GenUIRenderChild = (
  */
 export type GenUILayoutResult = { child: string; result: unknown }
 
-/** Layout components set `genuiLayout = true` to receive `renderChild`. */
-type MaybeLayout = { genuiLayout?: boolean }
+/**
+ * Layout components set `genuiLayout = true` to receive `renderChild`.
+ * Components that report an unconfirmed selection set `genuiDraft = true` to
+ * receive `onDraft`; others never get the prop.
+ */
+type MaybeLayout = { genuiLayout?: boolean; genuiDraft?: boolean }
 
 function isLayoutResult(v: unknown): v is GenUILayoutResult {
   return typeof v === "object" && v !== null && "child" in v && "result" in v
@@ -222,6 +226,14 @@ type RendererProps = {
   catalog: GenUICatalog
   /** Send the user's decision back to the agent, keyed by the call. */
   onResult?: (call: GenUICall, result: unknown) => void
+  /**
+   * The user's unconfirmed selection, keyed by the call: what the result
+   * would be if they confirmed now. Keep the latest per call and add it to
+   * the next typed message with `describeUIState`; never reply to it on its
+   * own, and drop it when the call's result comes. Inside a layout it comes
+   * wrapped like a result, `{ child, result }`.
+   */
+  onDraft?: (call: GenUICall, draft: unknown) => void
   /** Rendered for names the catalog doesn't know. Defaults to a short notice. */
   fallback?: React.ReactNode
   /** Failed calls: ask the agent to try again. Shows a Retry button. */
@@ -447,6 +459,7 @@ function RenderCall({
   call: rawCall,
   catalog,
   onResult,
+  onDraft,
   fallback,
   refs,
 }: RendererProps) {
@@ -468,6 +481,7 @@ function RenderCall({
       catalog={catalog}
       fallback={fallback}
       onResult={(result) => onResult?.(call, result)}
+      onDraft={onDraft && ((draft) => onDraft(call, draft))}
     />
   )
 }
@@ -483,6 +497,7 @@ type NodeProps = {
   catalog: GenUICatalog
   fallback?: React.ReactNode
   onResult?: (result: unknown) => void
+  onDraft?: (draft: unknown) => void
 }
 
 /**
@@ -500,9 +515,12 @@ function RenderNode({
   catalog,
   fallback,
   onResult,
+  onDraft,
 }: NodeProps) {
   const Component = catalog[name]
   const isLayout = (Component as MaybeLayout | undefined)?.genuiLayout === true
+  const takesDraft =
+    !isLayout && (Component as MaybeLayout | undefined)?.genuiDraft === true
 
   // Latest result per child, by key; keys map to ids as children render.
   const [childResults, setChildResults] = React.useState<
@@ -563,6 +581,11 @@ function RenderNode({
           setChildResults((prev) => ({ ...prev, [key]: childResult }))
           onResult?.({ child: key, result: childResult } satisfies GenUILayoutResult)
         }}
+        onDraft={
+          onDraft &&
+          ((draft) =>
+            onDraft({ child: key, result: draft } satisfies GenUILayoutResult))
+        }
       />
     )
   }
@@ -574,6 +597,7 @@ function RenderNode({
       status={status === "streaming" ? "streaming" : undefined}
       result={isLayout ? undefined : result}
       onResult={onResult}
+      {...(takesDraft && onDraft ? { onDraft } : {})}
       {...(isLayout ? { renderChild, childResults } : {})}
     />
   )
