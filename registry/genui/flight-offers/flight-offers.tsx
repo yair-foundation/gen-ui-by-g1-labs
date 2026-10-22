@@ -99,6 +99,12 @@ export type FlightOffersProps = Partial<
   status?: FlightOffersStatus
   /** Called once with the chosen offer (only when `selectable`). */
   onResult?: (result: FlightOffersResult) => void
+  /**
+   * Called when the user picks an offer, before they confirm. Not a
+   * decision: keep the latest and add it to the user's next typed message
+   * (`describeUIState`).
+   */
+  onDraft?: (draft: FlightOffersResult) => void
   /** A choice from history: read-only, chosen offer marked. Never calls onResult. */
   result?: FlightOffersResult
   className?: string
@@ -535,6 +541,7 @@ export function FlightOffers({
   source,
   status: statusProp,
   onResult,
+  onDraft,
   result,
   className,
 }: FlightOffersProps) {
@@ -595,7 +602,9 @@ export function FlightOffers({
   const href = safeUrl(source?.url)
 
   const choose = (id: string) => {
-    if (canChoose) setChoice(id)
+    if (!canChoose) return
+    setChoice(id)
+    if (id !== choice) onDraft?.({ action: "select", offerId: id })
   }
   const submit = () => {
     if (!canChoose || !chosen) return
@@ -869,3 +878,6 @@ export function FlightOffers({
     </MotionConfig>
   )
 }
+
+// The Renderer hands this component onDraft.
+FlightOffers.genuiDraft = true

@@ -199,6 +199,16 @@ export type HotelBookingResult =
   /** Confirmation mode. cancel-booking is only sent after a second, explicit click. */
   | { action: "manage" | "cancel-booking" | "add-to-calendar" };
 
+/**
+ * The selection before the user confirms, sent through `onDraft`: the
+ * reserve result for the picked room and rate, or change-stay when new dates
+ * or guests need a new quote. Not a decision.
+ */
+export type HotelBookingDraft = Extract<
+  HotelBookingResult,
+  { action: "reserve" | "change-stay" }
+>;
+
 /** Usage guidance the agent reads before choosing this component. */
 export const hotelBookingGuidance = {
   useWhen: [
