@@ -29,36 +29,18 @@ export const calendarEventSchema = z.object({
       "DATA-BOUND. Same format as start. For all-day events the end date is exclusive: '2026-10-15' to '2026-10-17' is two days.",
     ),
   allDay: z.boolean().optional().describe("DATA-BOUND."),
-  calendar: z
-    .string()
-    .optional()
-    .describe(
-      "DATA-BOUND. Which calendar it belongs to: an id from `calendars`, or a name like 'Work'.",
-    ),
-  location: z.string().optional().describe("DATA-BOUND."),
-  attendees: z
-    .number()
-    .int()
-    .min(0)
-    .optional()
-    .describe("DATA-BOUND. Number of attendees."),
   busy: z
     .boolean()
     .optional()
     .describe(
       "DATA-BOUND. Whether the event blocks time. Defaults to true for timed events and false for all-day events, which only count as busy when set to true.",
     ),
-  url: z
-    .string()
-    .optional()
-    .describe(
-      "DATA-BOUND. Link to the event in the calendar app. http(s) only.",
-    ),
 })
 
-export const calendarSourceSchema = z.object({
-  id: z.string().describe("DATA-BOUND. Matches `calendar` on events."),
-  label: z.string().describe("DATA-BOUND. e.g. 'Work'."),
+export const calendarTodoSchema = z.object({
+  id: z.string().describe("DATA-BOUND. The task's id in the task app."),
+  title: z.string().describe("DATA-BOUND."),
+  done: z.boolean().optional().describe("DATA-BOUND. Already completed."),
 })
 
 export const calendarProposalSchema = z
@@ -112,25 +94,27 @@ export const calendarSchema = z.object({
       "IANA timezone to show the schedule in, e.g. 'America/New_York'. Use the user's zone.",
     ),
   view: z
-    .enum(["day", "week", "month", "agenda", "today"])
+    .enum(["week", "day", "month", "today"])
     .default("week")
     .describe(
-      "The view shown first. The user can switch between day, week, month and agenda. 'today' is a compact card for one day (range.start): the date, all-day events, then the day's events stacked in order, with the current or next one marked.",
+      "'week': a time grid of up to 7 days from range.start. 'day': the same grid for one day. 'month': the month of range.start as day tiles. 'today': a list of one day's events (range.start) and to-dos, for 'what's on today?'.",
     ),
   range: z
     .object({
       start: z
         .string()
         .regex(dayKey)
-        .describe("First day shown, 'YYYY-MM-DD'. For month view, the 1st."),
+        .describe(
+          "First day shown, 'YYYY-MM-DD'. For month, any day in the month.",
+        ),
       days: z
         .number()
         .int()
         .min(1)
-        .max(42)
+        .max(7)
         .optional()
         .describe(
-          "How many days the events cover. Defaults to 1 (day or today), 7 (week or agenda) or the rest of the month (month).",
+          "Week only: how many days the grid shows, e.g. 5 for a work week. Defaults to 7.",
         ),
     })
     .describe("The period the events were fetched for."),
@@ -140,11 +124,13 @@ export const calendarSchema = z.object({
     .describe(
       "DATA-BOUND. Every event in the range, read from the calendar connector.",
     ),
-  calendars: z
-    .array(calendarSourceSchema)
-    .max(6)
+  todos: z
+    .array(calendarTodoSchema)
+    .max(20)
     .optional()
-    .describe("DATA-BOUND. Calendars shown in the legend, in this order."),
+    .describe(
+      "DATA-BOUND. View 'today' only: the day's tasks, read from the task connector, listed after the events.",
+    ),
   proposals: z
     .array(calendarProposalSchema)
     .max(20)
@@ -159,18 +145,18 @@ export const calendarSchema = z.object({
     })
     .optional()
     .describe(
-      "DATA-BOUND when known. Sets the visible hours (one hour either side); the grid grows to fit events outside them.",
+      "DATA-BOUND when known. The hours the grid shows (default 09:00–17:00); it grows to fit events outside them.",
     ),
   now: z
     .string()
     .optional()
     .describe(
-      "ISO date-time for the current-time line. Leave it out in real use; the viewer's clock is used.",
+      "ISO date-time that counts as now (marks today and what's on now). Leave it out in real use; the viewer's clock is used.",
     ),
 })
 
 export type CalendarEvent = z.input<typeof calendarEventSchema>
-export type CalendarSource = z.input<typeof calendarSourceSchema>
+export type CalendarTodo = z.input<typeof calendarTodoSchema>
 export type CalendarProposal = z.input<typeof calendarProposalSchema>
 export type CalendarInput = z.input<typeof calendarSchema>
 export type CalendarView = NonNullable<CalendarInput["view"]>
@@ -193,7 +179,7 @@ export type CalendarResult =
 export const calendarGuidance = {
   useWhen: [
     "The user asks what their day, week or month looks like.",
-    "The user asks what's on today (or one specific day) and wants a quick glance: use view 'today'.",
+    "The user asks what's on today (or one specific day) and wants a quick glance: use view 'today', with the day's to-dos when you have them.",
     "You want to change their calendar (move, add or cancel events) and they should see the changes in context before you write them.",
     "A plan has times that interact with existing meetings: focus blocks, an offsite agenda, rescheduling.",
   ],
@@ -203,13 +189,13 @@ export const calendarGuidance = {
     "The question has a one-line answer, e.g. 'When is my next meeting?'. Say it in text.",
   ],
   rules: [
-    "Every event must come from the calendar connector, with its real id, times and calendar.",
+    "Every event must come from the calendar connector, with its real id and times; every to-do from the task connector.",
     "Set timezone to the user's zone and give times with offsets.",
-    "For view 'today', set range.start to that day and pass only that day's events.",
+    "For view 'today', set range.start to that day and pass only that day's events and to-dos. Use 'day' instead when the user wants that day as a timeline.",
     "Pass the whole range you fetched, including free events, so overlaps and conflicts are accurate.",
     "Use proposals for every change; give each a one-line reason. For move and cancel, set eventId to the existing event.",
     "Without proposals the calendar is display-only and returns nothing.",
-    "To show another stretch of time ('only the next 10 days'), call it again with a new range and view: agenda lists any number of days, week shows 7 at a time, month shows the grid. Its look is fixed; say so if asked to restyle it.",
+    "To show another stretch of time, call it again with a new range and view: week shows up to 7 days (5 for a work week), month shows the whole month. Its look is fixed; say so if asked to restyle it.",
     "Write only the accepted proposal ids from an 'apply' result. On 'revise' or 'dismiss', write nothing.",
   ],
 } as const
