@@ -4,6 +4,8 @@ The designed component layer for generative UI: copy-paste components an AI agen
 
 [![Gen UI by G1 Labs reel: components an agent builds at runtime](.github/assets/reel.gif)](.github/assets/reel.mp4)
 
+![An agent answers a shopping, travel and work session with interfaces built from real components instead of paragraphs](.github/assets/film.gif)
+
 **Try it live:** type a request in the [playground](https://gen-ui-kit.vercel.app/playground) and an agent builds it from the catalog.
 
 Docs, live demos and install commands: https://gen-ui-kit.vercel.app
