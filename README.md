@@ -21,7 +21,7 @@ Each component's Zod schema is used three times: it builds the agent's prompt an
 | Path | Holds |
 | --- | --- |
 | `registry/genui/<name>/` | One folder per component: `<name>.tsx`, `<name>.schema.ts` (schema, guidance, tool), optional utils and `__tests__/` |
-| `registry/genui/renderer/` | The Renderer (lifecycle states, layouts, binds), the prompt and tool builder, validation, and adapters for the AI SDK, AG-UI, LangGraph, OpenUI and json-render |
+| `registry/genui/renderer/` | The Renderer (lifecycle states, layouts, binds), the prompt and tool builder, validation, and adapters for the AI SDK, AG-UI, LangGraph, OpenUI, json-render and A2UI |
 | `src/components/genui/` | Shared primitives every component uses (`Surface`, type and motion roles, series colours, date picker, locale) |
 | `src/components/ui/`, `src/components/animate-ui/` | The shadcn and Animate UI parts the components build on |
 | `registry.json` | The registry items, including the optional `genui-theme` |

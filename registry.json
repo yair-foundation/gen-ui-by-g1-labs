@@ -108,7 +108,7 @@
       "name": "renderer",
       "type": "registry:component",
       "title": "Renderer",
-      "description": "Renders generated-UI calls from any agent framework, composed into one response, with shared lifecycle states, nested layouts and binds between components. Includes AI SDK, LangGraph and AG-UI adapters, a catalog-to-prompt builder, input validation worded for the model, a Markdown fallback an OpenUI library export and a json-render catalog adapter.",
+      "description": "Renders generated-UI calls from any agent framework, composed into one response, with shared lifecycle states, nested layouts and binds between components. Includes AI SDK, LangGraph and AG-UI adapters, a catalog-to-prompt builder, input validation worded for the model, a Markdown fallback an OpenUI library export a json-render catalog adapter and an A2UI catalog and message adapter.",
       "categories": [
         "renderer"
       ],
@@ -162,6 +162,11 @@
           "path": "registry/genui/renderer/genui-json-render.ts",
           "type": "registry:lib",
           "target": "components/genui/genui-json-render.ts"
+        },
+        {
+          "path": "registry/genui/renderer/genui-a2ui.ts",
+          "type": "registry:lib",
+          "target": "components/genui/genui-a2ui.ts"
         },
         {
           "path": "src/components/genui/locale.ts",
